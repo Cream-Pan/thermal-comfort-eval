@@ -1,64 +1,93 @@
-# 主観評価GPSマッピングWebApp
+# 温熱環境GPSマッピングWebApp
 
-GPS CSVと主観評価CSVを読み込み，3種類の主観評価をOpenStreetMap上へ表示するWebAppです．
+GPSログを必須入力とし，主観評価ログおよびKestrel 5500のWeatherログを任意入力として地図化するWebAppです．
 
-## 主な機能
+## 表示できるマップ
 
-- GPS軌跡を地図上へ表示
-- 主観評価時刻に最も近いGPS点を自動対応付け
-- 温冷感，温熱的快・不快，温熱選好の表示切替
-- 定期地点評価を丸形，変動による評価をひし形で表示
-- 評価地点を色付きマーカーで表示
-- 任意で，前回の評価値を次の評価まで維持したものとして経路を色分け
-- GPSとの時刻差が10秒を超える評価へ警告表示
-- 評価マーカーの詳細ポップアップ
-- 主観評価とGPSを結合したCSVの保存
-- 地図画面のPNG保存
-- 評価一覧表の表示
+### 主観評価
 
-## 必要なCSV
+- 温冷感
+- 温熱的快・不快
+- 温熱選好
 
-### GPS CSV
+評価地点のマーカー表示を基本とし，任意で評価間のGPS経路を色分けできます．
+
+### 環境評価（M1）
+
+- 気温
+- 相対湿度
+- 風速
+- 暑さ指数
+
+Kestrelの測定時刻に最も近いGPS点へ値を割り当て，経路を色分けします．
+
+## 入力ファイル
+
+### GPS CSV【必須】
+
+必要列：
 
 ```text
-timestamp,latitude,longitude,accuracy,heading,speed
+timestamp,latitude,longitude
 ```
 
-時刻形式は次を想定しています．
+`accuracy`，`heading`，`speed`は任意ですが，存在する場合は詳細表示と結合CSVに使用します．
 
-```text
-2026/08/02 10:30:15.320
-```
+### Subjective CSV【任意】
 
-### 主観評価CSV
+必要列：
 
 ```text
 trigger_type,segment_id,evaluation_started_at,evaluation_submitted_at,response_duration_ms,thermal_sensation,thermal_comfort,thermal_preference
 ```
 
-## 使用方法
+### Weather CSV【任意】
 
-1．GitHub PagesなどのHTTPS環境へフォルダ内のファイルを配置します．
-2．WebAppを開き，GPS CSVと主観評価CSVを同時に選択します．
-3．「マッピングを作成する」を押します．
-4．温冷感，温熱的快・不快，温熱選好を切り替えて確認します．
-5．必要に応じて「評価間の経路を色分け」をONにします．
-6．PNGまたは結合CSVを保存します．
+Kestrel 5500のエクスポート形式に対応しています．次の列を使用します．
 
-## 対応付け方法
+```text
+FORMATTED DATE_TIME,Temperature,Relative Humidity,Wind Speed,Heat Index
+```
 
-主観評価CSVの`evaluation_started_at`に最も近いGPS時刻を検索し，その座標へ評価マーカーを配置します．
-GPSとの時刻差が`config.json`の`timeWarningThresholdMs`を超えた場合，警告として赤枠を表示します．
+ファイル先頭の機器情報行と，ヘッダー直後の単位行は自動的に除外します．
 
-## 経路色分けについて
+## ファイル組合せ
 
-経路色分けは，前回の評価値が次の評価時点まで維持されたと仮定した補助表示です．
-実際に回答した地点を示すマーカー表示が基本です．
+| GPS | Subjective | Weather | 表示内容 |
+|---|---|---|---|
+| ○ | × | × | GPS軌跡のみ |
+| ○ | ○ | × | 主観評価マップ |
+| ○ | × | ○ | 環境評価マップ |
+| ○ | ○ | ○ | 主観評価と環境評価の両方 |
 
-## 設定変更
+## 時刻同期
 
-`config.json`で次を変更できます．
+- 主観評価は`evaluation_started_at`に最も近いGPS点へ対応付けます．
+- Weatherは`FORMATTED DATE_TIME`に最も近いGPS点へ対応付けます．
+- 時刻補正機能は設けていません．
 
-- GPSとの時刻差警告値
-- OpenStreetMapの初期位置
-- 各主観評価の配色
+対応時刻差は読み込み結果，ポップアップ，一覧，結合CSVで確認できます．
+
+## 出力
+
+- 表示中の地図をPNG保存
+- 主観評価・GPS結合CSV
+- Weather・GPS結合CSV
+
+## 配置方法
+
+LeafletとOpenStreetMapを使用するため，GitHub PagesまたはNetlifyなどのHTTPS環境へ配置してください．
+`index.html`を直接開く場合も表示できますが，ブラウザのセキュリティ設定によって`config.json`を読み込めない場合は既定設定を使用します．
+
+
+## 一括ファイル選択
+
+1回のファイル選択で，GPS CSV，Subjective CSV，Weather CSVをまとめて選択できます．
+アプリはCSV列名からファイル種別を自動判別します．
+
+- GPS CSV：必須
+- Subjective CSV：任意
+- Weather CSV：任意
+
+同じ種類のCSVを複数選択した場合は，誤対応を防ぐためエラーを表示します．
+GPS CSVを確認できない場合は，マッピングを実行できません．

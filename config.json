@@ -1,6 +1,5 @@
 {
-  "appName": "主観評価GPSマッピング",
-  "timeWarningThresholdMs": 10000,
+  "appName": "温熱環境GPSマッピング",
   "map": {
     "defaultCenter": [35.681236, 139.767125],
     "defaultZoom": 16,
@@ -8,7 +7,7 @@
     "tileUrl": "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     "attribution": "&copy; OpenStreetMap contributors"
   },
-  "palettes": {
+  "subjectivePalettes": {
     "thermal_sensation": {
       "-3": "#2444a7",
       "-2": "#3979c3",
@@ -32,5 +31,11 @@
       "no_change": "#4f9f62",
       "warmer": "#dd8b2f"
     }
+  },
+  "weatherPalettes": {
+    "temperature": ["#2444a7", "#4aa8cf", "#d9e8b4", "#f2c14e", "#e36b4f", "#a92323"],
+    "humidity": ["#f4e7c5", "#c9e5dd", "#7fc7c9", "#3a91b3", "#24528c"],
+    "wind_speed": ["#edf4f7", "#b8d9e5", "#70b5d1", "#2d84b5", "#14527c"],
+    "heat_index": ["#c8e6a0", "#f1dc72", "#f2a65a", "#d95745", "#8b1e5a"]
   }
 }

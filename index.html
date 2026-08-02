@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#46a15f">
-  <meta name="description" content="GPSログと主観評価ログを地図上に表示するWebApp">
-  <title>主観評価GPSマッピング</title>
+  <meta name="description" content="GPS，主観評価，Kestrel気象データを地図上に表示するWebApp">
+  <title>温熱環境GPSマッピング</title>
 
   <link
     rel="stylesheet"
@@ -32,7 +32,7 @@
     <header class="app-header">
       <div>
         <p class="eyebrow">Outdoor Thermal Evaluation</p>
-        <h1>主観評価GPSマッピング</h1>
+        <h1>温熱環境GPSマッピング</h1>
       </div>
       <span class="privacy-badge">端末内で処理</span>
     </header>
@@ -42,24 +42,30 @@
     <section class="panel">
       <h2 class="section-title">1．CSVファイルの読み込み</h2>
       <p class="description">
-        同じ実験で生成したGPS CSVと主観評価CSVの2ファイルを選択してください．
+        GPS CSVは必須です．主観評価CSVとKestrel Weather CSVは任意です．複数のCSVを1回のファイル選択でまとめて読み込めます．
         ファイルはサーバへ送信せず，ブラウザ内で処理します．
       </p>
 
-      <label id="dropZone" class="drop-zone" for="csvFiles">
-        <input id="csvFiles" type="file" accept=".csv,text/csv" multiple>
-        <span class="drop-main">GPS CSVと主観評価CSVを選択</span>
-        <span class="drop-sub">または，2ファイルをここへドラッグ＆ドロップ</span>
+      <label id="batchFilePicker" class="file-picker batch-file-picker">
+        <span class="file-picker-title">CSVファイルを一括選択</span>
+        <input id="batchFileInput" type="file" accept=".csv,text/csv" multiple>
+        <span class="file-help">
+          GPS CSVは必須です．Subjective CSVとWeather CSVは任意です．1回の選択で最大3ファイルをまとめて選択できます．
+        </span>
       </label>
 
-      <div class="file-summary-grid">
-        <div class="file-summary">
-          <span class="file-label">GPS CSV</span>
+      <div class="detected-file-grid" aria-live="polite">
+        <div class="detected-file-row">
+          <span class="detected-file-label">GPS CSV <strong>必須</strong></span>
           <span id="gpsFileName" class="file-name">未選択</span>
         </div>
-        <div class="file-summary">
-          <span class="file-label">主観評価CSV</span>
+        <div class="detected-file-row">
+          <span class="detected-file-label">Subjective CSV <small>任意</small></span>
           <span id="subjectiveFileName" class="file-name">未選択</span>
+        </div>
+        <div class="detected-file-row">
+          <span class="detected-file-label">Weather CSV <small>任意</small></span>
+          <span id="weatherFileName" class="file-name">未選択</span>
         </div>
       </div>
 
@@ -79,15 +85,19 @@
           </div>
           <div class="summary-card">
             <span class="summary-label">主観評価数</span>
-            <strong id="evaluationCount" class="summary-value">0</strong>
+            <strong id="evaluationCount" class="summary-value">―</strong>
           </div>
           <div class="summary-card">
-            <span class="summary-label">最大時刻差</span>
-            <strong id="maxTimeDifference" class="summary-value">0 s</strong>
+            <span class="summary-label">Weather点数</span>
+            <strong id="weatherPointCount" class="summary-value">―</strong>
           </div>
           <div class="summary-card">
-            <span class="summary-label">警告評価数</span>
-            <strong id="warningCount" class="summary-value">0</strong>
+            <span class="summary-label">主観評価の最大時刻差</span>
+            <strong id="subjectiveMaxTimeDifference" class="summary-value">―</strong>
+          </div>
+          <div class="summary-card">
+            <span class="summary-label">Weatherの最大時刻差</span>
+            <strong id="weatherMaxTimeDifference" class="summary-value">―</strong>
           </div>
         </div>
       </section>
@@ -95,55 +105,91 @@
       <section class="panel map-panel">
         <div class="map-heading">
           <div>
-            <h2 class="section-title">3．主観評価マップ</h2>
+            <h2 class="section-title">3．温熱環境マップ</h2>
             <p id="mapMetricDescription" class="tiny-muted"></p>
           </div>
         </div>
 
-        <div class="metric-tabs" role="tablist" aria-label="表示する主観評価">
-          <button class="metric-tab active" type="button" data-metric="thermal_sensation">
-            温冷感
+        <div class="category-tabs" role="tablist" aria-label="マップ種別">
+          <button id="subjectiveCategoryTab" class="category-tab" type="button" data-category="subjective">
+            主観評価
           </button>
-          <button class="metric-tab" type="button" data-metric="thermal_comfort">
-            温熱的快・不快
-          </button>
-          <button class="metric-tab" type="button" data-metric="thermal_preference">
-            温熱選好
+          <button id="environmentCategoryTab" class="category-tab" type="button" data-category="environment">
+            環境評価（M1）
           </button>
         </div>
 
-        <div class="map-controls">
-          <label class="switch-control">
-            <input id="showTrackToggle" type="checkbox" checked>
-            <span>GPS軌跡を表示</span>
-          </label>
-          <label class="switch-control">
-            <input id="colorRouteToggle" type="checkbox">
-            <span>評価間の経路を色分け</span>
-          </label>
-          <label class="switch-control">
-            <input id="checkpointToggle" type="checkbox" checked>
-            <span>定期地点評価</span>
-          </label>
-          <label class="switch-control">
-            <input id="selfChangeToggle" type="checkbox" checked>
-            <span>変動による評価</span>
-          </label>
+        <div id="subjectiveControlArea" class="category-control-area hidden">
+          <div class="metric-tabs" role="tablist" aria-label="表示する主観評価">
+            <button class="metric-tab active" type="button" data-subjective-metric="thermal_sensation">温冷感</button>
+            <button class="metric-tab" type="button" data-subjective-metric="thermal_comfort">温熱的快・不快</button>
+            <button class="metric-tab" type="button" data-subjective-metric="thermal_preference">温熱選好</button>
+          </div>
+
+          <div class="map-controls">
+            <label class="switch-control">
+              <input id="subjectiveShowTrackToggle" type="checkbox" checked>
+              <span>GPS軌跡を表示</span>
+            </label>
+            <label class="switch-control">
+              <input id="subjectiveColorRouteToggle" type="checkbox">
+              <span>評価間の経路を色分け</span>
+            </label>
+            <label class="switch-control">
+              <input id="checkpointToggle" type="checkbox" checked>
+              <span>定期地点評価</span>
+            </label>
+            <label class="switch-control">
+              <input id="selfChangeToggle" type="checkbox" checked>
+              <span>変動による評価</span>
+            </label>
+          </div>
+
+          <p id="routeColorNote" class="route-note hidden">
+            経路色分けでは，前回の評価値が次の評価時点まで維持されたと仮定して表示します．
+          </p>
         </div>
 
-        <p id="routeColorNote" class="route-note hidden">
-          経路色分けでは，前回の評価値が次の評価時点まで維持されたと仮定して表示します．
-        </p>
+        <div id="environmentControlArea" class="category-control-area hidden">
+          <div class="metric-tabs" role="tablist" aria-label="表示する気象項目">
+            <button class="metric-tab active" type="button" data-weather-metric="temperature">気温</button>
+            <button class="metric-tab" type="button" data-weather-metric="humidity">相対湿度</button>
+            <button class="metric-tab" type="button" data-weather-metric="wind_speed">風速</button>
+            <button class="metric-tab" type="button" data-weather-metric="heat_index">暑さ指数</button>
+          </div>
+
+          <div class="map-controls">
+            <label class="switch-control">
+              <input id="environmentShowTrackToggle" type="checkbox" checked>
+              <span>GPS軌跡を表示</span>
+            </label>
+            <label class="switch-control">
+              <input id="weatherColorRouteToggle" type="checkbox" checked>
+              <span>気象経路を色分け</span>
+            </label>
+            <label class="switch-control">
+              <input id="weatherPointToggle" type="checkbox">
+              <span>気象測定点を表示</span>
+            </label>
+          </div>
+        </div>
+
+        <div id="gpsOnlyNotice" class="info-note hidden">
+          GPS軌跡を表示しています．Subjective CSVまたはWeather CSVを追加すると，評価マップを表示できます．
+        </div>
 
         <div id="mapCaptureArea" class="map-capture-area">
           <div class="capture-title-row">
             <div>
-              <strong id="captureTitle">温冷感マップ</strong>
+              <strong id="captureTitle">GPS軌跡</strong>
               <span id="captureSubtitle"></span>
             </div>
-            <div class="shape-guide">
+            <div id="subjectiveShapeGuide" class="shape-guide hidden">
               <span><i class="shape-sample circle"></i>定期地点評価</span>
               <span><i class="shape-sample diamond"></i>変動による評価</span>
+            </div>
+            <div id="environmentShapeGuide" class="shape-guide hidden">
+              <span><i class="shape-sample weather-dot"></i>Kestrel測定点</span>
             </div>
           </div>
           <div id="map"></div>
@@ -152,22 +198,20 @@
 
         <div class="toolbar output-toolbar">
           <button id="savePngButton" type="button">地図をPNG保存</button>
-          <button id="saveCombinedCsvButton" type="button">結合CSVを保存</button>
+          <button id="saveJoinedCsvButton" type="button" disabled>結合CSVを保存</button>
           <button id="fitMapButton" class="secondary-button" type="button">全経路を表示</button>
         </div>
       </section>
 
-      <section class="panel">
+      <section id="subjectiveTablePanel" class="panel hidden">
         <div class="table-heading">
           <div>
-            <h2 class="section-title">4．評価一覧</h2>
-            <p class="tiny-muted">
-              時刻差が設定値を超える評価は，赤色で表示します．
-            </p>
+            <h2 class="section-title">4．主観評価一覧</h2>
+            <p class="tiny-muted">各評価を最も近い時刻のGPS点へ対応付けています．</p>
           </div>
         </div>
         <div class="table-container">
-          <table id="evaluationTable">
+          <table id="subjectiveTable">
             <thead>
               <tr>
                 <th>No.</th>
@@ -177,6 +221,34 @@
                 <th>温冷感</th>
                 <th>快・不快</th>
                 <th>温熱選好</th>
+                <th>緯度</th>
+                <th>経度</th>
+                <th>GPS精度</th>
+                <th>時刻差</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="weatherTablePanel" class="panel hidden">
+        <div class="table-heading">
+          <div>
+            <h2 class="section-title">4．Weather一覧</h2>
+            <p class="tiny-muted">Kestrelの各測定値を最も近い時刻のGPS点へ対応付けています．</p>
+          </div>
+        </div>
+        <div class="table-container">
+          <table id="weatherTable">
+            <thead>
+              <tr>
+                <th>No.</th>
+                <th>Weather時刻</th>
+                <th>気温</th>
+                <th>相対湿度</th>
+                <th>風速</th>
+                <th>暑さ指数</th>
                 <th>緯度</th>
                 <th>経度</th>
                 <th>GPS精度</th>
