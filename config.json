@@ -1,0 +1,36 @@
+{
+  "appName": "主観評価GPSマッピング",
+  "timeWarningThresholdMs": 10000,
+  "map": {
+    "defaultCenter": [35.681236, 139.767125],
+    "defaultZoom": 16,
+    "maxZoom": 19,
+    "tileUrl": "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    "attribution": "&copy; OpenStreetMap contributors"
+  },
+  "palettes": {
+    "thermal_sensation": {
+      "-3": "#2444a7",
+      "-2": "#3979c3",
+      "-1": "#7db7dc",
+      "0": "#d9d9d9",
+      "1": "#f1b37b",
+      "2": "#e36b4f",
+      "3": "#a92323"
+    },
+    "thermal_comfort": {
+      "-3": "#9d1f1f",
+      "-2": "#d14b3f",
+      "-1": "#e8947e",
+      "0": "#d9d9d9",
+      "1": "#9dcc9d",
+      "2": "#58a96b",
+      "3": "#26733e"
+    },
+    "thermal_preference": {
+      "cooler": "#2c74b3",
+      "no_change": "#4f9f62",
+      "warmer": "#dd8b2f"
+    }
+  }
+}

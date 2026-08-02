@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#46a15f">
+  <meta name="description" content="GPSログと主観評価ログを地図上に表示するWebApp">
+  <title>主観評価GPSマッピング</title>
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  >
+  <link rel="stylesheet" href="style.css">
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+    defer
+  ></script>
+  <script
+    src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"
+    defer
+  ></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">Outdoor Thermal Evaluation</p>
+        <h1>主観評価GPSマッピング</h1>
+      </div>
+      <span class="privacy-badge">端末内で処理</span>
+    </header>
+
+    <div id="messageArea" class="message-area" aria-live="polite"></div>
+
+    <section class="panel">
+      <h2 class="section-title">1．CSVファイルの読み込み</h2>
+      <p class="description">
+        同じ実験で生成したGPS CSVと主観評価CSVの2ファイルを選択してください．
+        ファイルはサーバへ送信せず，ブラウザ内で処理します．
+      </p>
+
+      <label id="dropZone" class="drop-zone" for="csvFiles">
+        <input id="csvFiles" type="file" accept=".csv,text/csv" multiple>
+        <span class="drop-main">GPS CSVと主観評価CSVを選択</span>
+        <span class="drop-sub">または，2ファイルをここへドラッグ＆ドロップ</span>
+      </label>
+
+      <div class="file-summary-grid">
+        <div class="file-summary">
+          <span class="file-label">GPS CSV</span>
+          <span id="gpsFileName" class="file-name">未選択</span>
+        </div>
+        <div class="file-summary">
+          <span class="file-label">主観評価CSV</span>
+          <span id="subjectiveFileName" class="file-name">未選択</span>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <button id="loadButton" type="button" disabled>マッピングを作成する</button>
+        <button id="clearButton" class="secondary-button" type="button">読み込みを解除する</button>
+      </div>
+    </section>
+
+    <section id="resultSection" class="hidden">
+      <section class="panel compact-panel">
+        <h2 class="section-title">2．読み込み結果</h2>
+        <div class="summary-grid">
+          <div class="summary-card">
+            <span class="summary-label">GPS点数</span>
+            <strong id="gpsPointCount" class="summary-value">0</strong>
+          </div>
+          <div class="summary-card">
+            <span class="summary-label">主観評価数</span>
+            <strong id="evaluationCount" class="summary-value">0</strong>
+          </div>
+          <div class="summary-card">
+            <span class="summary-label">最大時刻差</span>
+            <strong id="maxTimeDifference" class="summary-value">0 s</strong>
+          </div>
+          <div class="summary-card">
+            <span class="summary-label">警告評価数</span>
+            <strong id="warningCount" class="summary-value">0</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel map-panel">
+        <div class="map-heading">
+          <div>
+            <h2 class="section-title">3．主観評価マップ</h2>
+            <p id="mapMetricDescription" class="tiny-muted"></p>
+          </div>
+        </div>
+
+        <div class="metric-tabs" role="tablist" aria-label="表示する主観評価">
+          <button class="metric-tab active" type="button" data-metric="thermal_sensation">
+            温冷感
+          </button>
+          <button class="metric-tab" type="button" data-metric="thermal_comfort">
+            温熱的快・不快
+          </button>
+          <button class="metric-tab" type="button" data-metric="thermal_preference">
+            温熱選好
+          </button>
+        </div>
+
+        <div class="map-controls">
+          <label class="switch-control">
+            <input id="showTrackToggle" type="checkbox" checked>
+            <span>GPS軌跡を表示</span>
+          </label>
+          <label class="switch-control">
+            <input id="colorRouteToggle" type="checkbox">
+            <span>評価間の経路を色分け</span>
+          </label>
+          <label class="switch-control">
+            <input id="checkpointToggle" type="checkbox" checked>
+            <span>定期地点評価</span>
+          </label>
+          <label class="switch-control">
+            <input id="selfChangeToggle" type="checkbox" checked>
+            <span>変動による評価</span>
+          </label>
+        </div>
+
+        <p id="routeColorNote" class="route-note hidden">
+          経路色分けでは，前回の評価値が次の評価時点まで維持されたと仮定して表示します．
+        </p>
+
+        <div id="mapCaptureArea" class="map-capture-area">
+          <div class="capture-title-row">
+            <div>
+              <strong id="captureTitle">温冷感マップ</strong>
+              <span id="captureSubtitle"></span>
+            </div>
+            <div class="shape-guide">
+              <span><i class="shape-sample circle"></i>定期地点評価</span>
+              <span><i class="shape-sample diamond"></i>変動による評価</span>
+            </div>
+          </div>
+          <div id="map"></div>
+          <div id="legend" class="legend"></div>
+        </div>
+
+        <div class="toolbar output-toolbar">
+          <button id="savePngButton" type="button">地図をPNG保存</button>
+          <button id="saveCombinedCsvButton" type="button">結合CSVを保存</button>
+          <button id="fitMapButton" class="secondary-button" type="button">全経路を表示</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="table-heading">
+          <div>
+            <h2 class="section-title">4．評価一覧</h2>
+            <p class="tiny-muted">
+              時刻差が設定値を超える評価は，赤色で表示します．
+            </p>
+          </div>
+        </div>
+        <div class="table-container">
+          <table id="evaluationTable">
+            <thead>
+              <tr>
+                <th>No.</th>
+                <th>評価時刻</th>
+                <th>種類</th>
+                <th>区間</th>
+                <th>温冷感</th>
+                <th>快・不快</th>
+                <th>温熱選好</th>
+                <th>緯度</th>
+                <th>経度</th>
+                <th>GPS精度</th>
+                <th>時刻差</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  </main>
+</body>
+</html>
