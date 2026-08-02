@@ -409,18 +409,67 @@ async function loadAndRender() {
     joinedSubjectiveRecords = [];
     joinedWeatherRecords = [];
 
+    let experimentTimeRange = null;
+
     if (selectedFiles.subjective) {
       const subjectiveText = await selectedFiles.subjective.text();
-      validateCsvHeaders(subjectiveText, SUBJECTIVE_REQUIRED_COLUMNS, 'Subjective CSV');
+      validateCsvHeaders(
+        subjectiveText,
+        SUBJECTIVE_REQUIRED_COLUMNS,
+        'Subjective CSV'
+      );
+
       subjectiveRecords = parseSubjectiveRecords(subjectiveText);
-      if (subjectiveRecords.length === 0) throw new Error('有効な主観評価データがありません．');
-      joinedSubjectiveRecords = joinRecordsToGps(subjectiveRecords, gpsRecords, 'epoch_ms');
+      
+      if (subjectiveRecords.length === 0) {
+        throw new Error('有効な主観評価データがありません．');
+      }
+
+      experimentTimeRange = getExperimentTimeRange(subjectiveRecords);
+
+      // START SubmitからRECOVERY_END SubmitまでのGPSだけを使用する
+      gpsRecords = filterRecordsByTimeRange(
+        gpsRecords,
+        experimentTimeRange.startEpochMs,
+        experimentTimeRange.endEpochMs
+      ).map((record, index) => ({
+        ...record,
+        gps_index: index
+      }));
+
+      if (gpsRecords.length === 0) {
+        throw new Error('START SubmitからRECOVERY_END SubmitまでのGPSデータがありません．');
+      }
+
+      // 同じ実験時間内の主観評価だけを使用する
+      subjectiveRecords = filterRecordsByTimeRange(
+        subjectiveRecords,
+        experimentTimeRange.startEpochMs,
+        experimentTimeRange.endEpochMs
+      );
+
+      joinedSubjectiveRecords = joinRecordsToGps(subjectiveRecords, gpsRecords, 'epoch_ms' );
     }
 
     if (selectedFiles.weather) {
       const weatherText = await selectedFiles.weather.text();
       weatherRecords = parseWeatherRecords(weatherText);
+
       if (weatherRecords.length === 0) throw new Error('有効なWeatherデータがありません．');
+
+      // Subjective CSVがある場合は，実験時間内のWeatherだけを使用する
+      if (experimentTimeRange) {
+        weatherRecords = filterRecordsByTimeRange(
+          weatherRecords,
+          experimentTimeRange.startEpochMs,
+          experimentTimeRange.endEpochMs
+        );
+      }
+
+      if (weatherRecords.length === 0) {
+        throw new Error('START SubmitからRECOVERY_END SubmitまでのWeatherデータがありません．');
+      }
+
       joinedWeatherRecords = joinRecordsToGps(weatherRecords, gpsRecords, 'epoch_ms');
     }
 
@@ -544,10 +593,72 @@ function parseSubjectiveRecords(text) {
       thermal_sensation: toNullableNumber(row.thermal_sensation),
       thermal_comfort: toNullableNumber(row.thermal_comfort),
       thermal_preference: normalizeHeader(row.thermal_preference),
-      epoch_ms: parseTimestamp(row.evaluation_started_at)
+      submitted_epoch_ms: parseTimestamp(row.evaluation_submitted_at),
+      epoch_ms: parseTimestamp(row.evaluation_submitted_at)
     }))
     .filter(record => Number.isFinite(record.epoch_ms))
     .sort((a, b) => a.epoch_ms - b.epoch_ms);
+}
+
+function getExperimentTimeRange(records) {
+  const startRecord = records.find(
+    record => record.segment_id.toUpperCase() === 'START'
+  );
+
+  const endRecords = records.filter(
+    record => record.segment_id.toUpperCase() === 'RECOVERY_END'
+  );
+
+  const endRecord = endRecords.length > 0
+    ? endRecords[endRecords.length - 1]
+    : null;
+
+  if (!startRecord) {
+    throw new Error(
+      'Subjective CSVにsegment_idがSTARTの評価を確認できませんでした．'
+    );
+  }
+
+  if (!endRecord) {
+    throw new Error(
+      'Subjective CSVにsegment_idがRECOVERY_ENDの評価を確認できませんでした．'
+    );
+  }
+
+  const startEpochMs = startRecord.submitted_epoch_ms;
+  const endEpochMs = endRecord.submitted_epoch_ms;
+
+  if (!Number.isFinite(startEpochMs) || !Number.isFinite(endEpochMs)) {
+    throw new Error(
+      'STARTまたはRECOVERY_ENDのevaluation_submitted_atを読み取れませんでした．'
+    );
+  }
+
+  if (startEpochMs >= endEpochMs) {
+    throw new Error(
+      'STARTとRECOVERY_ENDの時刻関係が正しくありません．'
+    );
+  }
+
+  return {
+    startEpochMs,
+    endEpochMs
+  };
+}
+
+function filterRecordsByTimeRange(
+  records,
+  startEpochMs,
+  endEpochMs,
+  epochKey = 'epoch_ms'
+) {
+  return records.filter(record => {
+    const epochMs = record[epochKey];
+
+    return Number.isFinite(epochMs)
+      && epochMs >= startEpochMs
+      && epochMs <= endEpochMs;
+  });
 }
 
 function parseWeatherRecords(text) {
