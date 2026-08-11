@@ -42,7 +42,7 @@
     <section class="panel">
       <h2 class="section-title">1．CSVファイルの読み込み</h2>
       <p class="description">
-        GPS CSVは必須です．主観評価CSV，Kestrel Weather CSV，MLX CSV最大2ファイル，PPG_ACC CSV最大2ファイルは任意です．複数のCSVを1回のファイル選択でまとめて読み込めます．
+        GPS CSVは必須です．主観評価CSV，Kestrel Weather CSV，SwitchBot固定点CSV最大3ファイル，MLX CSV最大2ファイル，PPG_ACC CSV最大2ファイルは任意です．複数のCSVを1回のファイル選択でまとめて読み込めます．
         ファイルはサーバへ送信せず，ブラウザ内で処理します．
       </p>
 
@@ -50,7 +50,7 @@
         <span class="file-picker-title">CSVファイルを一括選択</span>
         <input id="batchFileInput" type="file" accept=".csv,text/csv" multiple>
         <span class="file-help">
-          GPS CSVは必須です．Subjective，Weather，MLX最大2ファイル，PPG_ACC最大2ファイルをまとめて選択できます．
+          GPS CSVは必須です．Subjective，Weather，SwitchBot最大3ファイル，MLX最大2ファイル，PPG_ACC最大2ファイルをまとめて選択できます．
         </span>
       </label>
 
@@ -66,6 +66,10 @@
         <div class="detected-file-row">
           <span class="detected-file-label">Weather CSV <small>任意</small></span>
           <span id="weatherFileName" class="file-name">未選択</span>
+        </div>
+        <div class="detected-file-row">
+          <span class="detected-file-label">SwitchBot CSV <small>任意・最大3</small></span>
+          <span id="switchbotFileNames" class="file-name">未選択</span>
         </div>
         <div class="detected-file-row">
           <span class="detected-file-label">MLX CSV <small>任意・最大2</small></span>
@@ -98,6 +102,14 @@
           <div class="summary-card">
             <span class="summary-label">Weather点数</span>
             <strong id="weatherPointCount" class="summary-value">―</strong>
+          </div>
+          <div class="summary-card">
+            <span class="summary-label">固定点ファイル数</span>
+            <strong id="switchbotFileCount" class="summary-value">―</strong>
+          </div>
+          <div class="summary-card">
+            <span class="summary-label">固定点データ数</span>
+            <strong id="switchbotPointCount" class="summary-value">―</strong>
           </div>
           <div class="summary-card">
             <span class="summary-label">生体情報ファイル数</span>
@@ -135,7 +147,7 @@
             主観評価
           </button>
           <button id="environmentCategoryTab" class="category-tab" type="button" data-category="environment">
-            環境評価（M1）
+            環境評価
           </button>
           <button id="bioCategoryTab" class="category-tab" type="button" data-category="bio">
             生体情報
@@ -174,26 +186,75 @@
         </div>
 
         <div id="environmentControlArea" class="category-control-area hidden">
-          <div class="metric-tabs" role="tablist" aria-label="表示する気象項目">
-            <button class="metric-tab active" type="button" data-weather-metric="temperature">気温</button>
-            <button class="metric-tab" type="button" data-weather-metric="humidity">相対湿度</button>
-            <button class="metric-tab" type="button" data-weather-metric="wind_speed">風速</button>
-            <button class="metric-tab" type="button" data-weather-metric="heat_index">暑さ指数</button>
+          <div class="environment-mode-tabs" role="tablist" aria-label="環境評価の種類">
+            <button id="environmentM1Tab" class="environment-mode-tab active" type="button" data-environment-mode="m1">移動環境 M1</button>
+            <button id="environmentM0Tab" class="environment-mode-tab" type="button" data-environment-mode="m0">固定点環境 M0</button>
           </div>
 
-          <div class="map-controls">
-            <label class="switch-control">
-              <input id="environmentShowTrackToggle" type="checkbox" checked>
-              <span>GPS軌跡を表示</span>
-            </label>
-            <label class="switch-control">
-              <input id="weatherColorRouteToggle" type="checkbox" checked>
-              <span>気象経路を色分け</span>
-            </label>
-            <label class="switch-control">
-              <input id="weatherPointToggle" type="checkbox">
-              <span>気象測定点を表示</span>
-            </label>
+          <div id="environmentM1Controls">
+            <div class="metric-tabs" role="tablist" aria-label="表示する気象項目">
+              <button class="metric-tab active" type="button" data-weather-metric="temperature">気温</button>
+              <button class="metric-tab" type="button" data-weather-metric="humidity">相対湿度</button>
+              <button class="metric-tab" type="button" data-weather-metric="wind_speed">風速</button>
+              <button class="metric-tab" type="button" data-weather-metric="heat_index">暑さ指数</button>
+            </div>
+
+            <div class="map-controls">
+              <label class="switch-control">
+                <input id="environmentShowTrackToggle" type="checkbox" checked>
+                <span>GPS軌跡を表示</span>
+              </label>
+              <label class="switch-control">
+                <input id="weatherColorRouteToggle" type="checkbox" checked>
+                <span>気象経路を色分け</span>
+              </label>
+              <label class="switch-control">
+                <input id="weatherPointToggle" type="checkbox">
+                <span>気象測定点を表示</span>
+              </label>
+            </div>
+          </div>
+
+          <div id="environmentM0Controls" class="hidden">
+            <div class="metric-tabs" role="tablist" aria-label="表示する固定点環境項目">
+              <button class="metric-tab active" type="button" data-switchbot-metric="temperature">気温</button>
+              <button class="metric-tab" type="button" data-switchbot-metric="humidity">相対湿度</button>
+            </div>
+
+            <div class="fixed-point-settings">
+              <div class="control-block">
+                <span class="control-label">表示方法</span>
+                <label class="radio-control"><input type="radio" name="switchbotDisplayMode" value="time" checked> 時刻指定</label>
+                <label class="radio-control"><input type="radio" name="switchbotDisplayMode" value="average"> 実験区間平均</label>
+              </div>
+              <div class="control-block">
+                <label class="control-label" for="station1PositionSelect">固定点1の設置位置</label>
+                <select id="station1PositionSelect" class="compact-select">
+                  <option value="A">地点A（35.5676524，139.4013726）</option>
+                  <option value="B">地点B（35.5663157，139.4029614）</option>
+                </select>
+              </div>
+            </div>
+
+            <div id="switchbotTimeControl" class="time-slider-panel">
+              <div class="time-slider-heading">
+                <label for="switchbotTimeSlider">表示時刻</label>
+                <strong id="switchbotSelectedTime">―</strong>
+              </div>
+              <input id="switchbotTimeSlider" type="range" min="0" max="0" step="1" value="0" disabled>
+              <div class="time-slider-range">
+                <span id="switchbotTimeStart">―</span>
+                <span id="switchbotTimeEnd">―</span>
+              </div>
+            </div>
+
+            <div class="map-controls">
+              <label class="switch-control">
+                <input id="switchbotShowTrackToggle" type="checkbox" checked>
+                <span>GPS軌跡を表示</span>
+              </label>
+            </div>
+            <p class="info-note">固定点の値は空間補間せず，実測した3地点をそのまま表示します．</p>
           </div>
         </div>
 
@@ -219,7 +280,7 @@
         </div>
 
         <div id="gpsOnlyNotice" class="info-note hidden">
-          GPS軌跡を表示しています．Subjective，Weather，MLX，PPG_ACC CSVを追加すると，各評価マップを表示できます．
+          GPS軌跡を表示しています．Subjective，Weather，SwitchBot，MLX，PPG_ACC CSVを追加すると，各評価マップを表示できます．
         </div>
 
         <div id="mapCaptureArea" class="map-capture-area">
@@ -234,6 +295,9 @@
             </div>
             <div id="environmentShapeGuide" class="shape-guide hidden">
               <span><i class="shape-sample weather-dot"></i>Kestrel測定点</span>
+            </div>
+            <div id="switchbotShapeGuide" class="shape-guide hidden">
+              <span><i class="shape-sample switchbot-dot"></i>固定観測点</span>
             </div>
             <div id="bioShapeGuide" class="shape-guide hidden">
               <span><i class="shape-sample bio-dot"></i>生体情報測定点</span>

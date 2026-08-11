@@ -28,6 +28,21 @@ const DEFAULT_CONFIG = {
     wind_speed: ['#edf4f7', '#b8d9e5', '#70b5d1', '#2d84b5', '#14527c'],
     heat_index: ['#c8e6a0', '#f1dc72', '#f2a65a', '#d95745', '#8b1e5a']
   },
+  environmentScales: {
+    temperature: { min: 25, max: 40 },
+    humidity: { min: 40, max: 80 }
+  },
+  switchbotStations: {
+    '1': {
+      label: '固定点1',
+      positions: {
+        A: [35.5676524, 139.4013726],
+        B: [35.5663157, 139.4029614]
+      }
+    },
+    '2': { label: '固定点2', position: [35.5677830, 139.4015053] },
+    '3': { label: '固定点3', position: [35.5666651, 139.4013467] }
+  },
   bioPalettes: {
     mlx_object: ['#2444a7', '#4aa8cf', '#d9e8b4', '#f2c14e', '#e36b4f', '#a92323'],
     ear_hr: ['#2b6cb0', '#63b3ed', '#68d391', '#f6e05e', '#ed8936', '#c53030']
@@ -54,6 +69,7 @@ const WEATHER_REQUIRED_COLUMNS = [
 ];
 const MLX_REQUIRED_COLUMNS = ['Object_C', 'RecvJST', 'SensorElapsed_ms'];
 const PPG_REQUIRED_COLUMNS = ['Window_Center', 'Ear_HR_BPM_Window', 'Ear_HR_Usable'];
+const SWITCHBOT_REQUIRED_COLUMNS = ['Date', 'Temperature_Celsius(℃)', 'Relative_Humidity(%)'];
 
 const SUBJECTIVE_METRIC_INFO = {
   thermal_sensation: {
@@ -111,6 +127,23 @@ const WEATHER_METRIC_INFO = {
     digits: 1
   }
 };
+const SWITCHBOT_METRIC_INFO = {
+  temperature: {
+    title: '固定点環境（M0）―気温',
+    description: 'SwitchBot温湿度計プラスで取得した固定観測点の気温を表示します．',
+    column: 'temperature',
+    unit: '℃',
+    digits: 1
+  },
+  humidity: {
+    title: '固定点環境（M0）―相対湿度',
+    description: 'SwitchBot温湿度計プラスで取得した固定観測点の相対湿度を表示します．',
+    column: 'humidity',
+    unit: '%',
+    digits: 1
+  }
+};
+
 const BIO_TYPE_INFO = {
   mlx: {
     title: '生体情報―鼓膜方向温度（Object_C）',
@@ -129,18 +162,30 @@ const BIO_TYPE_INFO = {
 };
 
 let config = DEFAULT_CONFIG;
-let selectedFiles = { gps: null, subjective: null, weather: null, mlx: [], ppg: [] };
+let selectedFiles = {
+  gps: null, subjective: null, weather: null,
+  switchbot: { '1': null, '2': null, '3': null },
+  mlx: [], ppg: []
+};
 let gpsRecords = [];
 let subjectiveRecords = [];
 let weatherRecords = [];
+let switchbotDatasets = [];
+let switchbotTimeline = [];
+let experimentTimeRange = null;
 let joinedSubjectiveRecords = [];
 let joinedWeatherRecords = [];
 let bioDatasets = [];
 let currentBioDatasetIndex = 0;
 let sessionBaseName = 'thermal_map';
 let activeCategory = 'gps';
+let activeEnvironmentMode = 'm1';
 let currentSubjectiveMetric = 'thermal_sensation';
 let currentWeatherMetric = 'temperature';
+let currentSwitchbotMetric = 'temperature';
+let switchbotDisplayMode = 'time';
+let currentSwitchbotTimeIndex = 0;
+let station1Position = 'A';
 
 let map = null;
 let tileLayer = null;
@@ -149,6 +194,7 @@ let subjectiveMarkerLayer = null;
 let subjectiveRouteLayer = null;
 let weatherPointLayer = null;
 let weatherRouteLayer = null;
+let switchbotPointLayer = null;
 let bioPointLayer = null;
 let bioRouteLayer = null;
 let fullBounds = null;
@@ -176,18 +222,21 @@ function cacheElements() {
   const ids = [
     'messageArea',
     'batchFileInput', 'batchFilePicker',
-    'gpsFileName', 'subjectiveFileName', 'weatherFileName', 'mlxFileNames', 'ppgFileNames',
+    'gpsFileName', 'subjectiveFileName', 'weatherFileName', 'switchbotFileNames', 'mlxFileNames', 'ppgFileNames',
     'loadButton', 'clearButton', 'resultSection',
-    'gpsPointCount', 'evaluationCount', 'weatherPointCount', 'bioFileCount', 'bioPointCount',
+    'gpsPointCount', 'evaluationCount', 'weatherPointCount', 'switchbotFileCount', 'switchbotPointCount', 'bioFileCount', 'bioPointCount',
     'subjectiveMaxTimeDifference', 'weatherMaxTimeDifference', 'bioMaxTimeDifference',
     'subjectiveCategoryTab', 'environmentCategoryTab', 'bioCategoryTab',
     'subjectiveControlArea', 'environmentControlArea', 'bioControlArea', 'gpsOnlyNotice',
     'subjectiveShowTrackToggle', 'subjectiveColorRouteToggle',
     'checkpointToggle', 'selfChangeToggle', 'routeColorNote',
+    'environmentM1Tab', 'environmentM0Tab', 'environmentM1Controls', 'environmentM0Controls',
     'environmentShowTrackToggle', 'weatherColorRouteToggle', 'weatherPointToggle',
+    'switchbotShowTrackToggle', 'station1PositionSelect', 'switchbotTimeControl',
+    'switchbotTimeSlider', 'switchbotSelectedTime', 'switchbotTimeStart', 'switchbotTimeEnd',
     'bioFileSelect', 'bioShowTrackToggle', 'bioColorRouteToggle', 'bioPointToggle',
     'mapMetricDescription', 'captureTitle', 'captureSubtitle',
-    'subjectiveShapeGuide', 'environmentShapeGuide', 'bioShapeGuide',
+    'subjectiveShapeGuide', 'environmentShapeGuide', 'switchbotShapeGuide', 'bioShapeGuide',
     'mapCaptureArea', 'legend', 'savePngButton', 'saveJoinedCsvButton', 'fitMapButton',
     'subjectiveTablePanel', 'weatherTablePanel', 'subjectiveTable', 'weatherTable'
   ];
@@ -245,6 +294,40 @@ function bindEvents() {
     });
   });
 
+  document.querySelectorAll('[data-environment-mode]').forEach(button => {
+    button.addEventListener('click', () => {
+      switchEnvironmentMode(button.dataset.environmentMode);
+    });
+  });
+
+  document.querySelectorAll('[data-switchbot-metric]').forEach(button => {
+    button.addEventListener('click', () => {
+      currentSwitchbotMetric = button.dataset.switchbotMetric;
+      setActiveMetricButton('[data-switchbot-metric]', button);
+      renderMapLayers();
+    });
+  });
+
+  document.querySelectorAll('input[name="switchbotDisplayMode"]').forEach(input => {
+    input.addEventListener('change', () => {
+      if (!input.checked) return;
+      switchbotDisplayMode = input.value;
+      updateSwitchbotTimeControl();
+      renderMapLayers();
+    });
+  });
+
+  els.station1PositionSelect.addEventListener('change', () => {
+    station1Position = els.station1PositionSelect.value === 'B' ? 'B' : 'A';
+    renderMapLayers();
+  });
+
+  els.switchbotTimeSlider.addEventListener('input', () => {
+    currentSwitchbotTimeIndex = Number(els.switchbotTimeSlider.value) || 0;
+    updateSwitchbotTimeLabel();
+    renderMapLayers();
+  });
+
   els.bioFileSelect.addEventListener('change', () => {
     const index = Number(els.bioFileSelect.value);
     currentBioDatasetIndex = Number.isInteger(index) ? index : 0;
@@ -259,6 +342,7 @@ function bindEvents() {
     els.environmentShowTrackToggle,
     els.weatherColorRouteToggle,
     els.weatherPointToggle,
+    els.switchbotShowTrackToggle,
     els.bioShowTrackToggle,
     els.bioColorRouteToggle,
     els.bioPointToggle
@@ -310,6 +394,14 @@ function mergeConfig(base, loaded) {
       ...base.weatherPalettes,
       ...(loaded.weatherPalettes || {})
     },
+    environmentScales: {
+      ...base.environmentScales,
+      ...(loaded.environmentScales || {})
+    },
+    switchbotStations: {
+      ...base.switchbotStations,
+      ...(loaded.switchbotStations || {})
+    },
     bioPalettes: {
       ...base.bioPalettes,
       ...(loaded.bioPalettes || {})
@@ -334,12 +426,13 @@ function initializeMap() {
   weatherRouteLayer = L.layerGroup().addTo(map);
   subjectiveMarkerLayer = L.layerGroup().addTo(map);
   weatherPointLayer = L.layerGroup().addTo(map);
+  switchbotPointLayer = L.layerGroup().addTo(map);
   bioRouteLayer = L.layerGroup().addTo(map);
   bioPointLayer = L.layerGroup().addTo(map);
 }
 
 async function handleBatchFiles(files) {
-  selectedFiles = { gps: null, subjective: null, weather: null, mlx: [], ppg: [] };
+  selectedFiles = { gps: null, subjective: null, weather: null, switchbot: { '1': null, '2': null, '3': null }, mlx: [], ppg: [] };
   updateFileSummary();
 
   if (files.length === 0) {
@@ -360,6 +453,19 @@ async function handleBatchFiles(files) {
 
       if (!type) {
         unknownFiles.push(file.name);
+        continue;
+      }
+
+      if (type === 'switchbot') {
+        const stationId = detectSwitchbotStationId(file.name);
+        if (!stationId) {
+          throw new Error(`${file.name}をSwitchBot CSVとして認識しましたが，ファイル名から固定点1～3を判別できませんでした．`);
+        }
+        if (selectedFiles.switchbot[stationId]) {
+          throw new Error(`固定点${stationId}のSwitchBot CSVが複数選択されています．`);
+        }
+        selectedFiles.switchbot[stationId] = file;
+        detectedNames.push(`固定点${stationId}：${file.name}`);
         continue;
       }
 
@@ -393,7 +499,7 @@ async function handleBatchFiles(files) {
       unknownFiles.length > 0 ? 'warning' : 'normal');
   } catch (error) {
     console.error(error);
-    selectedFiles = { gps: null, subjective: null, weather: null, mlx: [], ppg: [] };
+    selectedFiles = { gps: null, subjective: null, weather: null, switchbot: { '1': null, '2': null, '3': null }, mlx: [], ppg: [] };
     updateFileSummary();
     showMessage(error.message || 'CSVファイルの判別に失敗しました．', 'error');
   } finally {
@@ -423,6 +529,10 @@ function detectCsvType(text) {
     return 'mlx';
   }
 
+  if (SWITCHBOT_REQUIRED_COLUMNS.every(column => firstHeaders.includes(column))) {
+    return 'switchbot';
+  }
+
   const weatherHeader = rows.find(row =>
     normalizeHeader(row[0]).toUpperCase() === 'FORMATTED DATE_TIME'
   );
@@ -441,6 +551,7 @@ function fileTypeLabel(type) {
     gps: 'GPS CSV',
     subjective: 'Subjective CSV',
     weather: 'Weather CSV',
+    switchbot: 'SwitchBot CSV',
     mlx: 'MLX CSV',
     ppg: 'PPG_ACC CSV'
   };
@@ -451,6 +562,10 @@ function updateFileSummary() {
   els.gpsFileName.textContent = selectedFiles.gps ? selectedFiles.gps.name : '未選択';
   els.subjectiveFileName.textContent = selectedFiles.subjective ? selectedFiles.subjective.name : '未選択';
   els.weatherFileName.textContent = selectedFiles.weather ? selectedFiles.weather.name : '未選択';
+  const switchbotNames = Object.entries(selectedFiles.switchbot)
+    .filter(([, file]) => Boolean(file))
+    .map(([stationId, file]) => `固定点${stationId}：${file.name}`);
+  els.switchbotFileNames.textContent = switchbotNames.length > 0 ? switchbotNames.join(' ／ ') : '未選択';
   els.mlxFileNames.textContent = selectedFiles.mlx.length > 0
     ? selectedFiles.mlx.map(file => file.name).join(' ／ ')
     : '未選択';
@@ -472,12 +587,18 @@ async function loadAndRender() {
 
     subjectiveRecords = [];
     weatherRecords = [];
+    switchbotDatasets = [];
+    switchbotTimeline = [];
     joinedSubjectiveRecords = [];
     joinedWeatherRecords = [];
     bioDatasets = [];
     currentBioDatasetIndex = 0;
+    currentSwitchbotTimeIndex = 0;
 
-    let experimentTimeRange = null;
+    experimentTimeRange = {
+      startEpochMs: gpsRecords[0].epoch_ms,
+      endEpochMs: gpsRecords[gpsRecords.length - 1].epoch_ms
+    };
     if (selectedFiles.subjective) {
       const subjectiveText = await selectedFiles.subjective.text();
       validateCsvHeaders(subjectiveText, SUBJECTIVE_REQUIRED_COLUMNS, 'Subjective CSV');
@@ -508,24 +629,39 @@ async function loadAndRender() {
       weatherRecords = parseWeatherRecords(weatherText);
       if (weatherRecords.length === 0) throw new Error('有効なWeatherデータがありません．');
 
-      if (experimentTimeRange) {
-        weatherRecords = filterRecordsByTimeRange(
-          weatherRecords,
-          experimentTimeRange.startEpochMs,
-          experimentTimeRange.endEpochMs
-        );
-      }
+      weatherRecords = filterRecordsByTimeRange(
+        weatherRecords,
+        experimentTimeRange.startEpochMs,
+        experimentTimeRange.endEpochMs
+      );
       if (weatherRecords.length === 0) {
-        throw new Error('START SubmitからRECOVERY_END SubmitまでのWeatherデータがありません．');
+        throw new Error('解析対象時間内のWeatherデータがありません．');
       }
       joinedWeatherRecords = joinRecordsToGps(weatherRecords, gpsRecords, 'epoch_ms');
     }
 
+    for (const [stationId, file] of Object.entries(selectedFiles.switchbot)) {
+      if (!file) continue;
+      const allRecords = parseSwitchbotRecords(await file.text(), file.name, stationId);
+      const records = filterRecordsByTimeRange(
+        allRecords,
+        experimentTimeRange.startEpochMs,
+        experimentTimeRange.endEpochMs
+      );
+      switchbotDatasets.push({
+        stationId,
+        fileName: file.name,
+        allRecords,
+        records
+      });
+    }
+    configureSwitchbotTimeline();
+
     for (const file of selectedFiles.mlx) {
       const records = parseMlxRecords(await file.text(), file.name);
-      const filtered = experimentTimeRange
-        ? filterRecordsByTimeRange(records, experimentTimeRange.startEpochMs, experimentTimeRange.endEpochMs)
-        : records;
+      const filtered = filterRecordsByTimeRange(
+        records, experimentTimeRange.startEpochMs, experimentTimeRange.endEpochMs
+      );
       if (filtered.length === 0) {
         throw new Error(`${file.name}に解析対象時間内のMLXデータがありません．`);
       }
@@ -539,9 +675,9 @@ async function loadAndRender() {
 
     for (const file of selectedFiles.ppg) {
       const records = parsePpgRecords(await file.text(), file.name);
-      const filtered = experimentTimeRange
-        ? filterRecordsByTimeRange(records, experimentTimeRange.startEpochMs, experimentTimeRange.endEpochMs)
-        : records;
+      const filtered = filterRecordsByTimeRange(
+        records, experimentTimeRange.startEpochMs, experimentTimeRange.endEpochMs
+      );
       if (filtered.length === 0) {
         throw new Error(`${file.name}に解析対象時間内の使用可能な耳PPG心拍データがありません．`);
       }
@@ -555,6 +691,9 @@ async function loadAndRender() {
 
     sessionBaseName = determineSessionBaseName();
     configureBioFileSelect();
+    activeEnvironmentMode = joinedWeatherRecords.length > 0 ? 'm1' : 'm0';
+    configureEnvironmentModeTabs();
+    updateSwitchbotTimeControl();
     chooseInitialCategory();
     configureCategoryTabs();
     renderSummary();
@@ -572,6 +711,7 @@ async function loadAndRender() {
     const loadedNames = ['GPS'];
     if (selectedFiles.subjective) loadedNames.push('Subjective');
     if (selectedFiles.weather) loadedNames.push('Weather');
+    if (switchbotDatasets.length > 0) loadedNames.push(`固定点${switchbotDatasets.length}ファイル`);
     if (bioDatasets.length > 0) loadedNames.push(`生体情報${bioDatasets.length}ファイル`);
     showMessage(`${loadedNames.join('，')} CSVを読み込み，マッピングを作成しました．`);
   } catch (error) {
@@ -598,7 +738,7 @@ function validateCsvHeaders(text, requiredColumns, label) {
 
 function chooseInitialCategory() {
   if (joinedSubjectiveRecords.length > 0) activeCategory = 'subjective';
-  else if (joinedWeatherRecords.length > 0) activeCategory = 'environment';
+  else if (joinedWeatherRecords.length > 0 || switchbotDatasets.some(dataset => dataset.records.length > 0)) activeCategory = 'environment';
   else if (bioDatasets.length > 0) activeCategory = 'bio';
   else activeCategory = 'gps';
 }
@@ -618,17 +758,17 @@ function configureBioFileSelect() {
 
 function configureCategoryTabs() {
   const hasSubjective = joinedSubjectiveRecords.length > 0;
-  const hasWeather = joinedWeatherRecords.length > 0;
+  const hasEnvironment = joinedWeatherRecords.length > 0 || switchbotDatasets.some(dataset => dataset.records.length > 0);
   const hasBio = bioDatasets.length > 0;
   els.subjectiveCategoryTab.disabled = !hasSubjective;
-  els.environmentCategoryTab.disabled = !hasWeather;
+  els.environmentCategoryTab.disabled = !hasEnvironment;
   els.bioCategoryTab.disabled = !hasBio;
   switchCategory(activeCategory, false);
 }
 
 function switchCategory(category, rerender = true) {
   if (category === 'subjective' && joinedSubjectiveRecords.length === 0) return;
-  if (category === 'environment' && joinedWeatherRecords.length === 0) return;
+  if (category === 'environment' && joinedWeatherRecords.length === 0 && !switchbotDatasets.some(dataset => dataset.records.length > 0)) return;
   if (category === 'bio' && bioDatasets.length === 0) return;
 
   activeCategory = category;
@@ -640,10 +780,11 @@ function switchCategory(category, rerender = true) {
   els.bioControlArea.classList.toggle('hidden', category !== 'bio');
   els.gpsOnlyNotice.classList.toggle('hidden', category !== 'gps');
   els.subjectiveTablePanel.classList.toggle('hidden', category !== 'subjective');
-  els.weatherTablePanel.classList.toggle('hidden', category !== 'environment');
-  els.saveJoinedCsvButton.disabled = category === 'gps';
+  els.weatherTablePanel.classList.toggle('hidden', category !== 'environment' || activeEnvironmentMode !== 'm1');
+  const isM0 = category === 'environment' && activeEnvironmentMode === 'm0';
+  els.saveJoinedCsvButton.disabled = category === 'gps' || isM0;
   els.saveJoinedCsvButton.textContent = category === 'environment'
-    ? 'Weather・GPS結合CSVを保存'
+    ? (activeEnvironmentMode === 'm1' ? 'Weather・GPS結合CSVを保存' : '固定点はGPS結合なし')
     : category === 'subjective'
       ? '主観評価・GPS結合CSVを保存'
       : category === 'bio'
@@ -654,6 +795,41 @@ function switchCategory(category, rerender = true) {
     renderMapLayers();
     requestAnimationFrame(() => map.invalidateSize());
   }
+}
+
+function configureEnvironmentModeTabs() {
+  const hasM1 = joinedWeatherRecords.length > 0;
+  const hasM0 = switchbotDatasets.some(dataset => dataset.records.length > 0);
+  els.environmentM1Tab.disabled = !hasM1;
+  els.environmentM0Tab.disabled = !hasM0;
+  if (activeEnvironmentMode === 'm1' && !hasM1) activeEnvironmentMode = hasM0 ? 'm0' : 'm1';
+  if (activeEnvironmentMode === 'm0' && !hasM0) activeEnvironmentMode = hasM1 ? 'm1' : 'm0';
+  updateEnvironmentModeUi();
+}
+
+function switchEnvironmentMode(mode) {
+  if (mode === 'm1' && joinedWeatherRecords.length === 0) return;
+  if (mode === 'm0' && !switchbotDatasets.some(dataset => dataset.records.length > 0)) return;
+  activeEnvironmentMode = mode;
+  updateEnvironmentModeUi();
+  if (activeCategory === 'environment') {
+    switchCategory('environment', false);
+    renderMapLayers();
+  }
+}
+
+function updateEnvironmentModeUi() {
+  els.environmentM1Tab.classList.toggle('active', activeEnvironmentMode === 'm1');
+  els.environmentM0Tab.classList.toggle('active', activeEnvironmentMode === 'm0');
+  els.environmentM1Controls.classList.toggle('hidden', activeEnvironmentMode !== 'm1');
+  els.environmentM0Controls.classList.toggle('hidden', activeEnvironmentMode !== 'm0');
+}
+
+function detectSwitchbotStationId(fileName) {
+  const match = String(fileName || '').match(/温湿度計プラス\s*([123])/);
+  if (match) return match[1];
+  const fallback = String(fileName || '').match(/(?:^|[_\s-])([123])(?:[_\s.-]|$)/);
+  return fallback ? fallback[1] : null;
 }
 
 function parseGpsRecords(text) {
@@ -757,6 +933,28 @@ function parseWeatherRecords(text) {
     .filter(record => Number.isFinite(record.epoch_ms)
       && [record.temperature, record.humidity, record.wind_speed, record.heat_index]
         .some(value => Number.isFinite(Number(value))))
+    .sort((a, b) => a.epoch_ms - b.epoch_ms);
+}
+
+function parseSwitchbotRecords(text, fileName, stationId) {
+  validateCsvHeaders(text, SWITCHBOT_REQUIRED_COLUMNS, `SwitchBot CSV（${fileName}）`);
+  const rows = csvToObjects(parseCsv(text));
+  return rows
+    .map((row, index) => {
+      const timestamp = normalizeHeader(row.Date);
+      return {
+        record_index: index,
+        station_id: stationId,
+        source_file: fileName,
+        timestamp,
+        epoch_ms: parseTimestamp(timestamp),
+        temperature: Number(row['Temperature_Celsius(℃)']),
+        humidity: Number(row['Relative_Humidity(%)'])
+      };
+    })
+    .filter(record => Number.isFinite(record.epoch_ms)
+      && Number.isFinite(record.temperature)
+      && Number.isFinite(record.humidity))
     .sort((a, b) => a.epoch_ms - b.epoch_ms);
 }
 
@@ -869,6 +1067,10 @@ function renderSummary() {
   els.gpsPointCount.textContent = String(gpsRecords.length);
   els.evaluationCount.textContent = selectedFiles.subjective ? String(joinedSubjectiveRecords.length) : '―';
   els.weatherPointCount.textContent = selectedFiles.weather ? String(joinedWeatherRecords.length) : '―';
+  els.switchbotFileCount.textContent = switchbotDatasets.length > 0 ? String(switchbotDatasets.length) : '―';
+  els.switchbotPointCount.textContent = switchbotDatasets.length > 0
+    ? String(switchbotDatasets.reduce((sum, dataset) => sum + dataset.records.length, 0))
+    : '―';
   els.bioFileCount.textContent = bioDatasets.length > 0 ? String(bioDatasets.length) : '―';
   els.bioPointCount.textContent = bioDatasets.length > 0 ? String(joinedBioRecords.length) : '―';
   els.subjectiveMaxTimeDifference.textContent = joinedSubjectiveRecords.length > 0
@@ -901,7 +1103,7 @@ function renderMapLayers() {
 
 function clearMapLayers() {
   [trackLayer, subjectiveRouteLayer, weatherRouteLayer, bioRouteLayer,
-    subjectiveMarkerLayer, weatherPointLayer, bioPointLayer]
+    subjectiveMarkerLayer, weatherPointLayer, switchbotPointLayer, bioPointLayer]
     .forEach(layer => layer.clearLayers());
 }
 
@@ -909,7 +1111,9 @@ function drawBaseTrackIfNeeded() {
   const shouldShow = activeCategory === 'subjective'
     ? els.subjectiveShowTrackToggle.checked
     : activeCategory === 'environment'
-      ? els.environmentShowTrackToggle.checked
+      ? (activeEnvironmentMode === 'm0'
+        ? els.switchbotShowTrackToggle.checked
+        : els.environmentShowTrackToggle.checked)
       : activeCategory === 'bio'
         ? els.bioShowTrackToggle.checked
         : true;
@@ -928,6 +1132,7 @@ function renderGpsOnlyMap() {
   els.captureSubtitle.textContent = selectedFiles.gps ? selectedFiles.gps.name : '';
   els.subjectiveShapeGuide.classList.add('hidden');
   els.environmentShapeGuide.classList.add('hidden');
+  els.switchbotShapeGuide.classList.add('hidden');
   els.bioShapeGuide.classList.add('hidden');
   els.legend.innerHTML = '';
 }
@@ -939,6 +1144,7 @@ function renderSubjectiveMap() {
   els.captureSubtitle.textContent = selectedFiles.subjective ? selectedFiles.subjective.name : '';
   els.subjectiveShapeGuide.classList.remove('hidden');
   els.environmentShapeGuide.classList.add('hidden');
+  els.switchbotShapeGuide.classList.add('hidden');
   els.bioShapeGuide.classList.add('hidden');
   els.routeColorNote.classList.toggle('hidden', !els.subjectiveColorRouteToggle.checked);
 
@@ -1001,12 +1207,18 @@ function renderSubjectiveLegend() {
 }
 
 function renderEnvironmentMap() {
+  if (activeEnvironmentMode === 'm0') {
+    renderSwitchbotMap();
+    return;
+  }
+
   const info = WEATHER_METRIC_INFO[currentWeatherMetric];
   els.mapMetricDescription.textContent = info.description;
   els.captureTitle.textContent = info.title;
   els.captureSubtitle.textContent = selectedFiles.weather ? selectedFiles.weather.name : '';
   els.subjectiveShapeGuide.classList.add('hidden');
   els.environmentShapeGuide.classList.toggle('hidden', !els.weatherPointToggle.checked);
+  els.switchbotShapeGuide.classList.add('hidden');
   els.bioShapeGuide.classList.add('hidden');
 
   const scale = getWeatherScale(currentWeatherMetric);
@@ -1057,6 +1269,15 @@ function drawWeatherPoints(scale) {
 
 function getWeatherScale(metric) {
   const info = WEATHER_METRIC_INFO[metric];
+  const fixed = config.environmentScales?.[metric];
+  if (fixed && Number.isFinite(Number(fixed.min)) && Number.isFinite(Number(fixed.max)) && Number(fixed.min) < Number(fixed.max)) {
+    return {
+      min: Number(fixed.min),
+      max: Number(fixed.max),
+      colors: config.weatherPalettes[metric] || ['#2444a7', '#a92323']
+    };
+  }
+
   const values = joinedWeatherRecords
     .map(record => Number(record[info.column]))
     .filter(Number.isFinite);
@@ -1132,6 +1353,225 @@ function renderWeatherLegend(scale) {
     </div>`;
 }
 
+function configureSwitchbotTimeline() {
+  switchbotTimeline = [];
+  const available = switchbotDatasets.filter(dataset => dataset.records.length > 0);
+  if (available.length === 0) {
+    currentSwitchbotTimeIndex = 0;
+    return;
+  }
+
+  const commonStart = Math.max(...available.map(dataset => dataset.records[0].epoch_ms));
+  const commonEnd = Math.min(...available.map(dataset => dataset.records[dataset.records.length - 1].epoch_ms));
+  if (commonStart > commonEnd) return;
+
+  const roundedStart = Math.ceil(commonStart / 60000) * 60000;
+  const roundedEnd = Math.floor(commonEnd / 60000) * 60000;
+  for (let epochMs = roundedStart; epochMs <= roundedEnd; epochMs += 60000) {
+    switchbotTimeline.push(epochMs);
+  }
+  currentSwitchbotTimeIndex = clamp(currentSwitchbotTimeIndex, 0, Math.max(0, switchbotTimeline.length - 1));
+}
+
+function updateSwitchbotTimeControl() {
+  const enabled = switchbotDisplayMode === 'time' && switchbotTimeline.length > 0;
+  els.switchbotTimeControl.classList.toggle('hidden', switchbotDisplayMode !== 'time');
+  els.switchbotTimeSlider.disabled = !enabled;
+  els.switchbotTimeSlider.min = '0';
+  els.switchbotTimeSlider.max = String(Math.max(0, switchbotTimeline.length - 1));
+  els.switchbotTimeSlider.step = '1';
+  els.switchbotTimeSlider.value = String(clamp(currentSwitchbotTimeIndex, 0, Math.max(0, switchbotTimeline.length - 1)));
+  if (switchbotTimeline.length > 0) {
+    els.switchbotTimeStart.textContent = formatMinuteTime(switchbotTimeline[0]);
+    els.switchbotTimeEnd.textContent = formatMinuteTime(switchbotTimeline[switchbotTimeline.length - 1]);
+  } else {
+    els.switchbotTimeStart.textContent = '―';
+    els.switchbotTimeEnd.textContent = '―';
+  }
+  updateSwitchbotTimeLabel();
+}
+
+function updateSwitchbotTimeLabel() {
+  if (switchbotTimeline.length === 0) {
+    els.switchbotSelectedTime.textContent = 'データなし';
+    return;
+  }
+  const index = clamp(currentSwitchbotTimeIndex, 0, switchbotTimeline.length - 1);
+  currentSwitchbotTimeIndex = index;
+  els.switchbotSelectedTime.textContent = formatMinuteTime(switchbotTimeline[index]);
+}
+
+function getSwitchbotStationPosition(stationId) {
+  const station = config.switchbotStations?.[stationId];
+  if (!station) return null;
+  if (stationId === '1') {
+    const position = station.positions?.[station1Position] || station.positions?.A;
+    return Array.isArray(position) ? position : null;
+  }
+  return Array.isArray(station.position) ? station.position : null;
+}
+
+function renderSwitchbotMap() {
+  const info = SWITCHBOT_METRIC_INFO[currentSwitchbotMetric];
+  els.mapMetricDescription.textContent = `${info.description} 固定点間の空間補間は行いません．`;
+  els.captureTitle.textContent = info.title;
+  els.captureSubtitle.textContent = switchbotDisplayMode === 'time'
+    ? `時刻指定：${switchbotTimeline.length > 0 ? formatMinuteTime(switchbotTimeline[currentSwitchbotTimeIndex]) : 'データなし'}`
+    : `実験区間平均：${formatExperimentRange()}`;
+  els.subjectiveShapeGuide.classList.add('hidden');
+  els.environmentShapeGuide.classList.add('hidden');
+  els.switchbotShapeGuide.classList.remove('hidden');
+  els.bioShapeGuide.classList.add('hidden');
+
+  const scale = getSwitchbotScale(currentSwitchbotMetric);
+  drawSwitchbotPoints(scale);
+  renderSwitchbotLegend(scale);
+}
+
+function getSwitchbotScale(metric) {
+  const fixed = config.environmentScales?.[metric];
+  const fallback = metric === 'temperature' ? { min: 25, max: 40 } : { min: 40, max: 80 };
+  return {
+    min: Number.isFinite(Number(fixed?.min)) ? Number(fixed.min) : fallback.min,
+    max: Number.isFinite(Number(fixed?.max)) ? Number(fixed.max) : fallback.max,
+    colors: config.weatherPalettes[metric] || ['#2444a7', '#a92323']
+  };
+}
+
+function drawSwitchbotPoints(scale) {
+  switchbotDatasets.forEach(dataset => {
+    const position = getSwitchbotStationPosition(dataset.stationId);
+    if (!position) return;
+    const display = getSwitchbotDisplayRecord(dataset);
+    if (!display || !Number.isFinite(Number(display.value))) return;
+
+    const color = colorForContinuousValue(Number(display.value), scale);
+    const marker = L.circleMarker(position, {
+      radius: 9,
+      color: '#ffffff',
+      weight: 2,
+      fillColor: color,
+      fillOpacity: 0.96
+    }).addTo(switchbotPointLayer);
+
+    marker.bindTooltip(
+      `${escapeHtml(config.switchbotStations?.[dataset.stationId]?.label || `固定点${dataset.stationId}`)}　${escapeHtml(formatSwitchbotMetric(display.value, currentSwitchbotMetric))}`,
+      { permanent: true, direction: 'top', offset: [0, -8], className: 'switchbot-value-tooltip' }
+    );
+    marker.bindPopup(buildSwitchbotPopup(dataset, display));
+  });
+}
+
+function getSwitchbotDisplayRecord(dataset) {
+  const info = SWITCHBOT_METRIC_INFO[currentSwitchbotMetric];
+  if (switchbotDisplayMode === 'average') {
+    const values = dataset.records.map(record => Number(record[info.column])).filter(Number.isFinite);
+    if (values.length === 0) return null;
+    return {
+      mode: 'average',
+      value: values.reduce((sum, value) => sum + value, 0) / values.length,
+      min: Math.min(...values),
+      max: Math.max(...values),
+      count: values.length
+    };
+  }
+
+  if (switchbotTimeline.length === 0 || dataset.records.length === 0) return null;
+  const targetEpochMs = switchbotTimeline[currentSwitchbotTimeIndex];
+  const nearestIndex = findNearestRecordIndex(dataset.records, targetEpochMs);
+  const record = dataset.records[nearestIndex];
+  if (!record || Math.abs(record.epoch_ms - targetEpochMs) > 90000) return null;
+  return {
+    mode: 'time',
+    record,
+    value: record[info.column],
+    targetEpochMs,
+    timeDifferenceMs: Math.abs(record.epoch_ms - targetEpochMs)
+  };
+}
+
+function findNearestRecordIndex(records, targetEpochMs) {
+  if (records.length === 0) return -1;
+  let low = 0;
+  let high = records.length - 1;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const value = records[middle].epoch_ms;
+    if (value < targetEpochMs) low = middle + 1;
+    else if (value > targetEpochMs) high = middle - 1;
+    else return middle;
+  }
+  if (low <= 0) return 0;
+  if (low >= records.length) return records.length - 1;
+  return Math.abs(records[low - 1].epoch_ms - targetEpochMs) <= Math.abs(records[low].epoch_ms - targetEpochMs)
+    ? low - 1 : low;
+}
+
+function buildSwitchbotPopup(dataset, display) {
+  const label = config.switchbotStations?.[dataset.stationId]?.label || `固定点${dataset.stationId}`;
+  if (display.mode === 'average') {
+    return `
+      <dl class="popup-grid">
+        <dt>固定点</dt><dd>${escapeHtml(label)}</dd>
+        <dt>ファイル</dt><dd>${escapeHtml(dataset.fileName)}</dd>
+        <dt>対象時間</dt><dd>${escapeHtml(formatExperimentRange())}</dd>
+        <dt>平均気温</dt><dd>${escapeHtml(formatAverageMetric(dataset.records, 'temperature', '℃', 1))}</dd>
+        <dt>気温範囲</dt><dd>${escapeHtml(formatRangeMetric(dataset.records, 'temperature', '℃', 1))}</dd>
+        <dt>平均相対湿度</dt><dd>${escapeHtml(formatAverageMetric(dataset.records, 'humidity', '%', 1))}</dd>
+        <dt>湿度範囲</dt><dd>${escapeHtml(formatRangeMetric(dataset.records, 'humidity', '%', 1))}</dd>
+        <dt>データ数</dt><dd>${dataset.records.length}</dd>
+      </dl>`;
+  }
+  const record = display.record;
+  return `
+    <dl class="popup-grid">
+      <dt>固定点</dt><dd>${escapeHtml(label)}</dd>
+      <dt>ファイル</dt><dd>${escapeHtml(dataset.fileName)}</dd>
+      <dt>測定時刻</dt><dd>${escapeHtml(record.timestamp)}</dd>
+      <dt>気温</dt><dd>${escapeHtml(formatOptionalMetric(record.temperature, '℃'))}</dd>
+      <dt>相対湿度</dt><dd>${escapeHtml(formatOptionalMetric(record.humidity, '%'))}</dd>
+    </dl>`;
+}
+
+function renderSwitchbotLegend(scale) {
+  const info = SWITCHBOT_METRIC_INFO[currentSwitchbotMetric];
+  const gradient = `linear-gradient(to right, ${scale.colors.join(', ')})`;
+  const middle = (scale.min + scale.max) / 2;
+  els.legend.innerHTML = `
+    <span class="legend-title">凡例</span>
+    <div class="legend-gradient">
+      <div class="gradient-bar" style="background:${gradient}"></div>
+      <div class="gradient-labels">
+        <span>${formatSwitchbotMetric(scale.min, currentSwitchbotMetric)}</span>
+        <span>${formatSwitchbotMetric(middle, currentSwitchbotMetric)}</span>
+        <span>${formatSwitchbotMetric(scale.max, currentSwitchbotMetric)}</span>
+      </div>
+    </div>`;
+}
+
+function formatSwitchbotMetric(value, metric) {
+  const info = SWITCHBOT_METRIC_INFO[metric];
+  return `${Number(value).toFixed(info.digits)} ${info.unit}`;
+}
+
+function formatAverageMetric(records, column, unit, digits) {
+  const values = records.map(record => Number(record[column])).filter(Number.isFinite);
+  if (values.length === 0) return '―';
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+  return `${average.toFixed(digits)} ${unit}`;
+}
+
+function formatRangeMetric(records, column, unit, digits) {
+  const values = records.map(record => Number(record[column])).filter(Number.isFinite);
+  if (values.length === 0) return '―';
+  return `${Math.min(...values).toFixed(digits)}～${Math.max(...values).toFixed(digits)} ${unit}`;
+}
+
+function formatExperimentRange() {
+  if (!experimentTimeRange) return '―';
+  return `${formatLocalTimeMinute(experimentTimeRange.startEpochMs)}～${formatLocalTimeMinute(experimentTimeRange.endEpochMs)}`;
+}
+
 function getCurrentBioDataset() {
   return bioDatasets[currentBioDatasetIndex] || null;
 }
@@ -1145,6 +1585,7 @@ function renderBioMap() {
   els.captureSubtitle.textContent = dataset.fileName;
   els.subjectiveShapeGuide.classList.add('hidden');
   els.environmentShapeGuide.classList.add('hidden');
+  els.switchbotShapeGuide.classList.add('hidden');
   els.bioShapeGuide.classList.toggle('hidden', !els.bioPointToggle.checked);
 
   const scale = getBioScale(dataset);
@@ -1305,11 +1746,18 @@ function renderWeatherTable() {
 }
 
 function updateFullBounds() {
-  if (gpsRecords.length === 0) {
+  const points = gpsRecords.map(record => [record.latitude, record.longitude]);
+  if (activeCategory === 'environment' && activeEnvironmentMode === 'm0') {
+    switchbotDatasets.forEach(dataset => {
+      const position = getSwitchbotStationPosition(dataset.stationId);
+      if (position) points.push(position);
+    });
+  }
+  if (points.length === 0) {
     fullBounds = null;
     return;
   }
-  fullBounds = L.latLngBounds(gpsRecords.map(record => [record.latitude, record.longitude]));
+  fullBounds = L.latLngBounds(points);
 }
 
 function fitMapToData() {
@@ -1344,7 +1792,11 @@ async function saveMapAsPng() {
 
 function activeMapFileSuffix() {
   if (activeCategory === 'subjective') return currentSubjectiveMetric;
-  if (activeCategory === 'environment') return `weather_${currentWeatherMetric}`;
+  if (activeCategory === 'environment') {
+    return activeEnvironmentMode === 'm0'
+      ? `fixedpoint_${currentSwitchbotMetric}_${switchbotDisplayMode}`
+      : `weather_${currentWeatherMetric}`;
+  }
   if (activeCategory === 'bio') {
     const dataset = getCurrentBioDataset();
     return dataset ? `bio_${dataset.type}_${sanitizeFileName(dataset.fileName.replace(/\.csv$/i, ''))}` : 'bio';
@@ -1354,7 +1806,7 @@ function activeMapFileSuffix() {
 
 function saveActiveJoinedCsv() {
   if (activeCategory === 'subjective') saveSubjectiveJoinedCsv();
-  else if (activeCategory === 'environment') saveWeatherJoinedCsv();
+  else if (activeCategory === 'environment' && activeEnvironmentMode === 'm1') saveWeatherJoinedCsv();
   else if (activeCategory === 'bio') saveBioJoinedCsv();
 }
 
@@ -1404,17 +1856,28 @@ function determineSessionBaseName() {
 }
 
 function clearAll() {
-  selectedFiles = { gps: null, subjective: null, weather: null, mlx: [], ppg: [] };
+  selectedFiles = { gps: null, subjective: null, weather: null, switchbot: { '1': null, '2': null, '3': null }, mlx: [], ppg: [] };
   gpsRecords = [];
   subjectiveRecords = [];
   weatherRecords = [];
+  switchbotDatasets = [];
+  switchbotTimeline = [];
+  experimentTimeRange = null;
   joinedSubjectiveRecords = [];
   joinedWeatherRecords = [];
   bioDatasets = [];
   currentBioDatasetIndex = 0;
   activeCategory = 'gps';
+  activeEnvironmentMode = 'm1';
   currentSubjectiveMetric = 'thermal_sensation';
   currentWeatherMetric = 'temperature';
+  currentSwitchbotMetric = 'temperature';
+  switchbotDisplayMode = 'time';
+  currentSwitchbotTimeIndex = 0;
+  station1Position = 'A';
+  els.station1PositionSelect.value = 'A';
+  const timeRadio = document.querySelector('input[name="switchbotDisplayMode"][value="time"]');
+  if (timeRadio) timeRadio.checked = true;
 
   els.batchFileInput.value = '';
   els.resultSection.classList.add('hidden');
@@ -1493,6 +1956,17 @@ function parseTimestamp(value) {
     ).getTime();
   }
 
+  const switchbotMatch = text.match(
+    /^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/
+  );
+  if (switchbotMatch) {
+    const [, year, month, day, hour, minute, second = '0'] = switchbotMatch;
+    return new Date(
+      Number(year), Number(month) - 1, Number(day),
+      Number(hour), Number(minute), Number(second), 0
+    ).getTime();
+  }
+
   const kestrelMatch = text.match(
     /^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2}):(\d{2})\s+(AM|PM)$/i
   );
@@ -1508,6 +1982,18 @@ function parseTimestamp(value) {
 
   const parsed = Date.parse(text);
   return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function formatMinuteTime(epochMs) {
+  const d = new Date(epochMs);
+  const pad = number => String(number).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function formatLocalTimeMinute(epochMs) {
+  const d = new Date(epochMs);
+  const pad = number => String(number).padStart(2, '0');
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function normalizeHeader(value) {
