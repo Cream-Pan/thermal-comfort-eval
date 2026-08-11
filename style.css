@@ -663,3 +663,46 @@ tbody tr:nth-child(even) {
   border-color: #005fa3;
   background: #e8f3f9;
 }
+
+
+/* 生体情報タブ */
+.bio-file-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.bio-file-control label {
+  font-weight: 600;
+}
+.bio-file-select {
+  min-width: min(100%, 420px);
+  max-width: 100%;
+  padding: 0.65em 0.8em;
+  border: 1px solid #c9d1d7;
+  border-radius: 6px;
+  background: #fff;
+  color: #333;
+  font: inherit;
+}
+.bio-file-select:disabled {
+  opacity: 0.55;
+}
+.bio-marker-wrapper {
+  background: transparent;
+  border: none;
+}
+.bio-marker {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+.shape-sample.bio-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #6b7280;
+}

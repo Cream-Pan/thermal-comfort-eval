@@ -27,6 +27,10 @@ const DEFAULT_CONFIG = {
     humidity: ['#f4e7c5', '#c9e5dd', '#7fc7c9', '#3a91b3', '#24528c'],
     wind_speed: ['#edf4f7', '#b8d9e5', '#70b5d1', '#2d84b5', '#14527c'],
     heat_index: ['#c8e6a0', '#f1dc72', '#f2a65a', '#d95745', '#8b1e5a']
+  },
+  bioPalettes: {
+    mlx_object: ['#2444a7', '#4aa8cf', '#d9e8b4', '#f2c14e', '#e36b4f', '#a92323'],
+    ear_hr: ['#2b6cb0', '#63b3ed', '#68d391', '#f6e05e', '#ed8936', '#c53030']
   }
 };
 
@@ -48,6 +52,8 @@ const WEATHER_REQUIRED_COLUMNS = [
   'Wind Speed',
   'Heat Index'
 ];
+const MLX_REQUIRED_COLUMNS = ['Object_C', 'RecvJST', 'SensorElapsed_ms'];
+const PPG_REQUIRED_COLUMNS = ['Window_Center', 'Ear_HR_BPM_Window', 'Ear_HR_Usable'];
 
 const SUBJECTIVE_METRIC_INFO = {
   thermal_sensation: {
@@ -105,14 +111,32 @@ const WEATHER_METRIC_INFO = {
     digits: 1
   }
 };
+const BIO_TYPE_INFO = {
+  mlx: {
+    title: '生体情報―鼓膜方向温度（Object_C）',
+    description: 'MLX CSVのObject_Cを，再構築したセンサ時間軸に基づいてGPS経路上へ表示します．',
+    unit: '℃',
+    digits: 2,
+    paletteKey: 'mlx_object'
+  },
+  ppg: {
+    title: '生体情報―耳PPG心拍数',
+    description: 'Ear_HR_UsableがTRUEの窓について，Ear_HR_BPM_WindowをWindow_Center時刻でGPS経路上へ表示します．',
+    unit: 'bpm',
+    digits: 1,
+    paletteKey: 'ear_hr'
+  }
+};
 
 let config = DEFAULT_CONFIG;
-let selectedFiles = { gps: null, subjective: null, weather: null };
+let selectedFiles = { gps: null, subjective: null, weather: null, mlx: [], ppg: [] };
 let gpsRecords = [];
 let subjectiveRecords = [];
 let weatherRecords = [];
 let joinedSubjectiveRecords = [];
 let joinedWeatherRecords = [];
+let bioDatasets = [];
+let currentBioDatasetIndex = 0;
 let sessionBaseName = 'thermal_map';
 let activeCategory = 'gps';
 let currentSubjectiveMetric = 'thermal_sensation';
@@ -125,6 +149,8 @@ let subjectiveMarkerLayer = null;
 let subjectiveRouteLayer = null;
 let weatherPointLayer = null;
 let weatherRouteLayer = null;
+let bioPointLayer = null;
+let bioRouteLayer = null;
 let fullBounds = null;
 
 const els = {};
@@ -150,17 +176,18 @@ function cacheElements() {
   const ids = [
     'messageArea',
     'batchFileInput', 'batchFilePicker',
-    'gpsFileName', 'subjectiveFileName', 'weatherFileName',
+    'gpsFileName', 'subjectiveFileName', 'weatherFileName', 'mlxFileNames', 'ppgFileNames',
     'loadButton', 'clearButton', 'resultSection',
-    'gpsPointCount', 'evaluationCount', 'weatherPointCount',
-    'subjectiveMaxTimeDifference', 'weatherMaxTimeDifference',
-    'subjectiveCategoryTab', 'environmentCategoryTab',
-    'subjectiveControlArea', 'environmentControlArea', 'gpsOnlyNotice',
+    'gpsPointCount', 'evaluationCount', 'weatherPointCount', 'bioFileCount', 'bioPointCount',
+    'subjectiveMaxTimeDifference', 'weatherMaxTimeDifference', 'bioMaxTimeDifference',
+    'subjectiveCategoryTab', 'environmentCategoryTab', 'bioCategoryTab',
+    'subjectiveControlArea', 'environmentControlArea', 'bioControlArea', 'gpsOnlyNotice',
     'subjectiveShowTrackToggle', 'subjectiveColorRouteToggle',
     'checkpointToggle', 'selfChangeToggle', 'routeColorNote',
     'environmentShowTrackToggle', 'weatherColorRouteToggle', 'weatherPointToggle',
+    'bioFileSelect', 'bioShowTrackToggle', 'bioColorRouteToggle', 'bioPointToggle',
     'mapMetricDescription', 'captureTitle', 'captureSubtitle',
-    'subjectiveShapeGuide', 'environmentShapeGuide',
+    'subjectiveShapeGuide', 'environmentShapeGuide', 'bioShapeGuide',
     'mapCaptureArea', 'legend', 'savePngButton', 'saveJoinedCsvButton', 'fitMapButton',
     'subjectiveTablePanel', 'weatherTablePanel', 'subjectiveTable', 'weatherTable'
   ];
@@ -218,6 +245,12 @@ function bindEvents() {
     });
   });
 
+  els.bioFileSelect.addEventListener('change', () => {
+    const index = Number(els.bioFileSelect.value);
+    currentBioDatasetIndex = Number.isInteger(index) ? index : 0;
+    renderMapLayers();
+  });
+
   [
     els.subjectiveShowTrackToggle,
     els.subjectiveColorRouteToggle,
@@ -225,7 +258,10 @@ function bindEvents() {
     els.selfChangeToggle,
     els.environmentShowTrackToggle,
     els.weatherColorRouteToggle,
-    els.weatherPointToggle
+    els.weatherPointToggle,
+    els.bioShowTrackToggle,
+    els.bioColorRouteToggle,
+    els.bioPointToggle
   ].forEach(input => input.addEventListener('change', renderMapLayers));
 
   els.savePngButton.addEventListener('click', saveMapAsPng);
@@ -273,6 +309,10 @@ function mergeConfig(base, loaded) {
     weatherPalettes: {
       ...base.weatherPalettes,
       ...(loaded.weatherPalettes || {})
+    },
+    bioPalettes: {
+      ...base.bioPalettes,
+      ...(loaded.bioPalettes || {})
     }
   };
 }
@@ -294,10 +334,12 @@ function initializeMap() {
   weatherRouteLayer = L.layerGroup().addTo(map);
   subjectiveMarkerLayer = L.layerGroup().addTo(map);
   weatherPointLayer = L.layerGroup().addTo(map);
+  bioRouteLayer = L.layerGroup().addTo(map);
+  bioPointLayer = L.layerGroup().addTo(map);
 }
 
 async function handleBatchFiles(files) {
-  selectedFiles = { gps: null, subjective: null, weather: null };
+  selectedFiles = { gps: null, subjective: null, weather: null, mlx: [], ppg: [] };
   updateFileSummary();
 
   if (files.length === 0) {
@@ -321,10 +363,18 @@ async function handleBatchFiles(files) {
         continue;
       }
 
+      if (type === 'mlx' || type === 'ppg') {
+        if (selectedFiles[type].length >= 2) {
+          throw new Error(`${fileTypeLabel(type)}は最大2ファイルまで選択できます．`);
+        }
+        selectedFiles[type].push(file);
+        detectedNames.push(`${fileTypeLabel(type)}：${file.name}`);
+        continue;
+      }
+
       if (selectedFiles[type]) {
         throw new Error(`${fileTypeLabel(type)}が複数選択されています：${selectedFiles[type].name}，${file.name}`);
       }
-
       selectedFiles[type] = file;
       detectedNames.push(`${fileTypeLabel(type)}：${file.name}`);
     }
@@ -343,7 +393,7 @@ async function handleBatchFiles(files) {
       unknownFiles.length > 0 ? 'warning' : 'normal');
   } catch (error) {
     console.error(error);
-    selectedFiles = { gps: null, subjective: null, weather: null };
+    selectedFiles = { gps: null, subjective: null, weather: null, mlx: [], ppg: [] };
     updateFileSummary();
     showMessage(error.message || 'CSVファイルの判別に失敗しました．', 'error');
   } finally {
@@ -365,6 +415,14 @@ function detectCsvType(text) {
     return 'subjective';
   }
 
+  if (PPG_REQUIRED_COLUMNS.every(column => firstHeaders.includes(column))) {
+    return 'ppg';
+  }
+
+  if (MLX_REQUIRED_COLUMNS.every(column => firstHeaders.includes(column))) {
+    return 'mlx';
+  }
+
   const weatherHeader = rows.find(row =>
     normalizeHeader(row[0]).toUpperCase() === 'FORMATTED DATE_TIME'
   );
@@ -382,7 +440,9 @@ function fileTypeLabel(type) {
   const labels = {
     gps: 'GPS CSV',
     subjective: 'Subjective CSV',
-    weather: 'Weather CSV'
+    weather: 'Weather CSV',
+    mlx: 'MLX CSV',
+    ppg: 'PPG_ACC CSV'
   };
   return labels[type] || type;
 }
@@ -391,6 +451,12 @@ function updateFileSummary() {
   els.gpsFileName.textContent = selectedFiles.gps ? selectedFiles.gps.name : '未選択';
   els.subjectiveFileName.textContent = selectedFiles.subjective ? selectedFiles.subjective.name : '未選択';
   els.weatherFileName.textContent = selectedFiles.weather ? selectedFiles.weather.name : '未選択';
+  els.mlxFileNames.textContent = selectedFiles.mlx.length > 0
+    ? selectedFiles.mlx.map(file => file.name).join(' ／ ')
+    : '未選択';
+  els.ppgFileNames.textContent = selectedFiles.ppg.length > 0
+    ? selectedFiles.ppg.map(file => file.name).join(' ／ ')
+    : '未選択';
   els.loadButton.disabled = !selectedFiles.gps;
 }
 
@@ -408,56 +474,40 @@ async function loadAndRender() {
     weatherRecords = [];
     joinedSubjectiveRecords = [];
     joinedWeatherRecords = [];
+    bioDatasets = [];
+    currentBioDatasetIndex = 0;
 
     let experimentTimeRange = null;
-
     if (selectedFiles.subjective) {
       const subjectiveText = await selectedFiles.subjective.text();
-      validateCsvHeaders(
-        subjectiveText,
-        SUBJECTIVE_REQUIRED_COLUMNS,
-        'Subjective CSV'
-      );
-
+      validateCsvHeaders(subjectiveText, SUBJECTIVE_REQUIRED_COLUMNS, 'Subjective CSV');
       subjectiveRecords = parseSubjectiveRecords(subjectiveText);
-      
-      if (subjectiveRecords.length === 0) {
-        throw new Error('有効な主観評価データがありません．');
-      }
+      if (subjectiveRecords.length === 0) throw new Error('有効な主観評価データがありません．');
 
       experimentTimeRange = getExperimentTimeRange(subjectiveRecords);
-
-      // START SubmitからRECOVERY_END SubmitまでのGPSだけを使用する
       gpsRecords = filterRecordsByTimeRange(
         gpsRecords,
         experimentTimeRange.startEpochMs,
         experimentTimeRange.endEpochMs
-      ).map((record, index) => ({
-        ...record,
-        gps_index: index
-      }));
+      ).map((record, index) => ({ ...record, gps_index: index }));
 
       if (gpsRecords.length === 0) {
         throw new Error('START SubmitからRECOVERY_END SubmitまでのGPSデータがありません．');
       }
 
-      // 同じ実験時間内の主観評価だけを使用する
       subjectiveRecords = filterRecordsByTimeRange(
         subjectiveRecords,
         experimentTimeRange.startEpochMs,
         experimentTimeRange.endEpochMs
       );
-
-      joinedSubjectiveRecords = joinRecordsToGps(subjectiveRecords, gpsRecords, 'epoch_ms' );
+      joinedSubjectiveRecords = joinRecordsToGps(subjectiveRecords, gpsRecords, 'epoch_ms');
     }
 
     if (selectedFiles.weather) {
       const weatherText = await selectedFiles.weather.text();
       weatherRecords = parseWeatherRecords(weatherText);
-
       if (weatherRecords.length === 0) throw new Error('有効なWeatherデータがありません．');
 
-      // Subjective CSVがある場合は，実験時間内のWeatherだけを使用する
       if (experimentTimeRange) {
         weatherRecords = filterRecordsByTimeRange(
           weatherRecords,
@@ -465,15 +515,46 @@ async function loadAndRender() {
           experimentTimeRange.endEpochMs
         );
       }
-
       if (weatherRecords.length === 0) {
         throw new Error('START SubmitからRECOVERY_END SubmitまでのWeatherデータがありません．');
       }
-
       joinedWeatherRecords = joinRecordsToGps(weatherRecords, gpsRecords, 'epoch_ms');
     }
 
+    for (const file of selectedFiles.mlx) {
+      const records = parseMlxRecords(await file.text(), file.name);
+      const filtered = experimentTimeRange
+        ? filterRecordsByTimeRange(records, experimentTimeRange.startEpochMs, experimentTimeRange.endEpochMs)
+        : records;
+      if (filtered.length === 0) {
+        throw new Error(`${file.name}に解析対象時間内のMLXデータがありません．`);
+      }
+      bioDatasets.push({
+        type: 'mlx',
+        fileName: file.name,
+        records: filtered,
+        joinedRecords: joinRecordsToGps(filtered, gpsRecords, 'epoch_ms')
+      });
+    }
+
+    for (const file of selectedFiles.ppg) {
+      const records = parsePpgRecords(await file.text(), file.name);
+      const filtered = experimentTimeRange
+        ? filterRecordsByTimeRange(records, experimentTimeRange.startEpochMs, experimentTimeRange.endEpochMs)
+        : records;
+      if (filtered.length === 0) {
+        throw new Error(`${file.name}に解析対象時間内の使用可能な耳PPG心拍データがありません．`);
+      }
+      bioDatasets.push({
+        type: 'ppg',
+        fileName: file.name,
+        records: filtered,
+        joinedRecords: joinRecordsToGps(filtered, gpsRecords, 'epoch_ms')
+      });
+    }
+
     sessionBaseName = determineSessionBaseName();
+    configureBioFileSelect();
     chooseInitialCategory();
     configureCategoryTabs();
     renderSummary();
@@ -491,6 +572,7 @@ async function loadAndRender() {
     const loadedNames = ['GPS'];
     if (selectedFiles.subjective) loadedNames.push('Subjective');
     if (selectedFiles.weather) loadedNames.push('Weather');
+    if (bioDatasets.length > 0) loadedNames.push(`生体情報${bioDatasets.length}ファイル`);
     showMessage(`${loadedNames.join('，')} CSVを読み込み，マッピングを作成しました．`);
   } catch (error) {
     console.error(error);
@@ -517,28 +599,45 @@ function validateCsvHeaders(text, requiredColumns, label) {
 function chooseInitialCategory() {
   if (joinedSubjectiveRecords.length > 0) activeCategory = 'subjective';
   else if (joinedWeatherRecords.length > 0) activeCategory = 'environment';
+  else if (bioDatasets.length > 0) activeCategory = 'bio';
   else activeCategory = 'gps';
+}
+
+function configureBioFileSelect() {
+  els.bioFileSelect.innerHTML = '';
+  bioDatasets.forEach((dataset, index) => {
+    const option = document.createElement('option');
+    option.value = String(index);
+    option.textContent = `${dataset.type === 'mlx' ? 'MLX' : 'PPG'}：${dataset.fileName}`;
+    els.bioFileSelect.appendChild(option);
+  });
+  currentBioDatasetIndex = Math.min(currentBioDatasetIndex, Math.max(0, bioDatasets.length - 1));
+  els.bioFileSelect.value = String(currentBioDatasetIndex);
+  els.bioFileSelect.disabled = bioDatasets.length === 0;
 }
 
 function configureCategoryTabs() {
   const hasSubjective = joinedSubjectiveRecords.length > 0;
   const hasWeather = joinedWeatherRecords.length > 0;
-
+  const hasBio = bioDatasets.length > 0;
   els.subjectiveCategoryTab.disabled = !hasSubjective;
   els.environmentCategoryTab.disabled = !hasWeather;
-
+  els.bioCategoryTab.disabled = !hasBio;
   switchCategory(activeCategory, false);
 }
 
 function switchCategory(category, rerender = true) {
   if (category === 'subjective' && joinedSubjectiveRecords.length === 0) return;
   if (category === 'environment' && joinedWeatherRecords.length === 0) return;
+  if (category === 'bio' && bioDatasets.length === 0) return;
 
   activeCategory = category;
   els.subjectiveCategoryTab.classList.toggle('active', category === 'subjective');
   els.environmentCategoryTab.classList.toggle('active', category === 'environment');
+  els.bioCategoryTab.classList.toggle('active', category === 'bio');
   els.subjectiveControlArea.classList.toggle('hidden', category !== 'subjective');
   els.environmentControlArea.classList.toggle('hidden', category !== 'environment');
+  els.bioControlArea.classList.toggle('hidden', category !== 'bio');
   els.gpsOnlyNotice.classList.toggle('hidden', category !== 'gps');
   els.subjectiveTablePanel.classList.toggle('hidden', category !== 'subjective');
   els.weatherTablePanel.classList.toggle('hidden', category !== 'environment');
@@ -547,7 +646,9 @@ function switchCategory(category, rerender = true) {
     ? 'Weather・GPS結合CSVを保存'
     : category === 'subjective'
       ? '主観評価・GPS結合CSVを保存'
-      : '結合CSVを保存';
+      : category === 'bio'
+        ? '生体情報・GPS結合CSVを保存'
+        : '結合CSVを保存';
 
   if (rerender) {
     renderMapLayers();
@@ -601,63 +702,26 @@ function parseSubjectiveRecords(text) {
 }
 
 function getExperimentTimeRange(records) {
-  const startRecord = records.find(
-    record => record.segment_id.toUpperCase() === 'START'
-  );
+  const startRecord = records.find(record => record.segment_id.toUpperCase() === 'START');
+  const endRecords = records.filter(record => record.segment_id.toUpperCase() === 'RECOVERY_END');
+  const endRecord = endRecords.length > 0 ? endRecords[endRecords.length - 1] : null;
 
-  const endRecords = records.filter(
-    record => record.segment_id.toUpperCase() === 'RECOVERY_END'
-  );
-
-  const endRecord = endRecords.length > 0
-    ? endRecords[endRecords.length - 1]
-    : null;
-
-  if (!startRecord) {
-    throw new Error(
-      'Subjective CSVにsegment_idがSTARTの評価を確認できませんでした．'
-    );
-  }
-
-  if (!endRecord) {
-    throw new Error(
-      'Subjective CSVにsegment_idがRECOVERY_ENDの評価を確認できませんでした．'
-    );
-  }
+  if (!startRecord) throw new Error('Subjective CSVにsegment_idがSTARTの評価を確認できませんでした．');
+  if (!endRecord) throw new Error('Subjective CSVにsegment_idがRECOVERY_ENDの評価を確認できませんでした．');
 
   const startEpochMs = startRecord.submitted_epoch_ms;
   const endEpochMs = endRecord.submitted_epoch_ms;
-
   if (!Number.isFinite(startEpochMs) || !Number.isFinite(endEpochMs)) {
-    throw new Error(
-      'STARTまたはRECOVERY_ENDのevaluation_submitted_atを読み取れませんでした．'
-    );
+    throw new Error('STARTまたはRECOVERY_ENDのevaluation_submitted_atを読み取れませんでした．');
   }
-
-  if (startEpochMs >= endEpochMs) {
-    throw new Error(
-      'STARTとRECOVERY_ENDの時刻関係が正しくありません．'
-    );
-  }
-
-  return {
-    startEpochMs,
-    endEpochMs
-  };
+  if (startEpochMs >= endEpochMs) throw new Error('STARTとRECOVERY_ENDの時刻関係が正しくありません．');
+  return { startEpochMs, endEpochMs };
 }
 
-function filterRecordsByTimeRange(
-  records,
-  startEpochMs,
-  endEpochMs,
-  epochKey = 'epoch_ms'
-) {
+function filterRecordsByTimeRange(records, startEpochMs, endEpochMs, epochKey = 'epoch_ms') {
   return records.filter(record => {
     const epochMs = record[epochKey];
-
-    return Number.isFinite(epochMs)
-      && epochMs >= startEpochMs
-      && epochMs <= endEpochMs;
+    return Number.isFinite(epochMs) && epochMs >= startEpochMs && epochMs <= endEpochMs;
   });
 }
 
@@ -693,6 +757,70 @@ function parseWeatherRecords(text) {
     .filter(record => Number.isFinite(record.epoch_ms)
       && [record.temperature, record.humidity, record.wind_speed, record.heat_index]
         .some(value => Number.isFinite(Number(value))))
+    .sort((a, b) => a.epoch_ms - b.epoch_ms);
+}
+
+function parseMlxRecords(text, fileName) {
+  validateCsvHeaders(text, MLX_REQUIRED_COLUMNS, `MLX CSV（${fileName}）`);
+  const rows = csvToObjects(parseCsv(text));
+  const rawRecords = rows
+    .map((row, index) => ({
+      record_index: index,
+      recv_jst: normalizeHeader(row.RecvJST),
+      recv_epoch_ms: parseTimestamp(row.RecvJST),
+      sensor_elapsed_ms: Number(row.SensorElapsed_ms),
+      object_c: Number(row.Object_C)
+    }))
+    .filter(record => Number.isFinite(record.recv_epoch_ms)
+      && Number.isFinite(record.sensor_elapsed_ms)
+      && Number.isFinite(record.object_c));
+
+  if (rawRecords.length === 0) {
+    throw new Error(`${fileName}に有効なObject_C，RecvJST，SensorElapsed_msを確認できませんでした．`);
+  }
+
+  const baseRecvEpochMs = rawRecords[0].recv_epoch_ms;
+  const baseSensorElapsedMs = rawRecords[0].sensor_elapsed_ms;
+
+  return rawRecords
+    .map(record => {
+      // SensorElapsed_msはファイル先頭を0 msとして正規化し，最初のRecvJSTへ加算する．
+      const epochMs = baseRecvEpochMs + (record.sensor_elapsed_ms - baseSensorElapsedMs);
+      return {
+        ...record,
+        source_file: fileName,
+        bio_type: 'mlx',
+        bio_timestamp: formatLocalTimeWithMs(epochMs),
+        epoch_ms: epochMs,
+        bio_value: record.object_c
+      };
+    })
+    .sort((a, b) => a.epoch_ms - b.epoch_ms);
+}
+
+function parsePpgRecords(text, fileName) {
+  validateCsvHeaders(text, PPG_REQUIRED_COLUMNS, `PPG_ACC CSV（${fileName}）`);
+  const rows = csvToObjects(parseCsv(text));
+  return rows
+    .map((row, index) => {
+      const usable = parseBoolean(row.Ear_HR_Usable);
+      const bpm = Number(row.Ear_HR_BPM_Window);
+      const windowCenter = normalizeHeader(row.Window_Center);
+      return {
+        record_index: index,
+        source_file: fileName,
+        bio_type: 'ppg',
+        window_center: windowCenter,
+        bio_timestamp: windowCenter,
+        epoch_ms: parseTimestamp(windowCenter),
+        ear_hr_usable: usable,
+        ear_hr_bpm_window: bpm,
+        bio_value: bpm
+      };
+    })
+    .filter(record => record.ear_hr_usable === true
+      && Number.isFinite(record.epoch_ms)
+      && Number.isFinite(record.bio_value))
     .sort((a, b) => a.epoch_ms - b.epoch_ms);
 }
 
@@ -737,14 +865,20 @@ function findNearestGpsIndex(records, targetEpochMs) {
 }
 
 function renderSummary() {
+  const joinedBioRecords = bioDatasets.flatMap(dataset => dataset.joinedRecords);
   els.gpsPointCount.textContent = String(gpsRecords.length);
   els.evaluationCount.textContent = selectedFiles.subjective ? String(joinedSubjectiveRecords.length) : '―';
   els.weatherPointCount.textContent = selectedFiles.weather ? String(joinedWeatherRecords.length) : '―';
+  els.bioFileCount.textContent = bioDatasets.length > 0 ? String(bioDatasets.length) : '―';
+  els.bioPointCount.textContent = bioDatasets.length > 0 ? String(joinedBioRecords.length) : '―';
   els.subjectiveMaxTimeDifference.textContent = joinedSubjectiveRecords.length > 0
     ? formatSeconds(Math.max(...joinedSubjectiveRecords.map(record => record.time_difference_ms)))
     : '―';
   els.weatherMaxTimeDifference.textContent = joinedWeatherRecords.length > 0
     ? formatSeconds(Math.max(...joinedWeatherRecords.map(record => record.time_difference_ms)))
+    : '―';
+  els.bioMaxTimeDifference.textContent = joinedBioRecords.length > 0
+    ? formatSeconds(Math.max(...joinedBioRecords.map(record => record.time_difference_ms)))
     : '―';
 }
 
@@ -756,6 +890,8 @@ function renderMapLayers() {
     renderSubjectiveMap();
   } else if (activeCategory === 'environment') {
     renderEnvironmentMap();
+  } else if (activeCategory === 'bio') {
+    renderBioMap();
   } else {
     renderGpsOnlyMap();
   }
@@ -764,7 +900,8 @@ function renderMapLayers() {
 }
 
 function clearMapLayers() {
-  [trackLayer, subjectiveRouteLayer, weatherRouteLayer, subjectiveMarkerLayer, weatherPointLayer]
+  [trackLayer, subjectiveRouteLayer, weatherRouteLayer, bioRouteLayer,
+    subjectiveMarkerLayer, weatherPointLayer, bioPointLayer]
     .forEach(layer => layer.clearLayers());
 }
 
@@ -773,7 +910,9 @@ function drawBaseTrackIfNeeded() {
     ? els.subjectiveShowTrackToggle.checked
     : activeCategory === 'environment'
       ? els.environmentShowTrackToggle.checked
-      : true;
+      : activeCategory === 'bio'
+        ? els.bioShowTrackToggle.checked
+        : true;
 
   if (!shouldShow || gpsRecords.length < 2) return;
 
@@ -789,6 +928,7 @@ function renderGpsOnlyMap() {
   els.captureSubtitle.textContent = selectedFiles.gps ? selectedFiles.gps.name : '';
   els.subjectiveShapeGuide.classList.add('hidden');
   els.environmentShapeGuide.classList.add('hidden');
+  els.bioShapeGuide.classList.add('hidden');
   els.legend.innerHTML = '';
 }
 
@@ -799,6 +939,7 @@ function renderSubjectiveMap() {
   els.captureSubtitle.textContent = selectedFiles.subjective ? selectedFiles.subjective.name : '';
   els.subjectiveShapeGuide.classList.remove('hidden');
   els.environmentShapeGuide.classList.add('hidden');
+  els.bioShapeGuide.classList.add('hidden');
   els.routeColorNote.classList.toggle('hidden', !els.subjectiveColorRouteToggle.checked);
 
   if (els.subjectiveColorRouteToggle.checked) drawSubjectiveColoredRoute();
@@ -866,6 +1007,7 @@ function renderEnvironmentMap() {
   els.captureSubtitle.textContent = selectedFiles.weather ? selectedFiles.weather.name : '';
   els.subjectiveShapeGuide.classList.add('hidden');
   els.environmentShapeGuide.classList.toggle('hidden', !els.weatherPointToggle.checked);
+  els.bioShapeGuide.classList.add('hidden');
 
   const scale = getWeatherScale(currentWeatherMetric);
   if (els.weatherColorRouteToggle.checked) drawWeatherColoredRoute(scale);
@@ -990,6 +1132,114 @@ function renderWeatherLegend(scale) {
     </div>`;
 }
 
+function getCurrentBioDataset() {
+  return bioDatasets[currentBioDatasetIndex] || null;
+}
+
+function renderBioMap() {
+  const dataset = getCurrentBioDataset();
+  if (!dataset) return;
+  const info = BIO_TYPE_INFO[dataset.type];
+  els.mapMetricDescription.textContent = `${info.description} 対象：${dataset.fileName}`;
+  els.captureTitle.textContent = info.title;
+  els.captureSubtitle.textContent = dataset.fileName;
+  els.subjectiveShapeGuide.classList.add('hidden');
+  els.environmentShapeGuide.classList.add('hidden');
+  els.bioShapeGuide.classList.toggle('hidden', !els.bioPointToggle.checked);
+
+  const scale = getBioScale(dataset);
+  if (els.bioColorRouteToggle.checked) drawBioColoredRoute(dataset, scale);
+  if (els.bioPointToggle.checked) drawBioPoints(dataset, scale);
+  renderBioLegend(dataset, scale);
+}
+
+function getBioScale(dataset) {
+  const values = dataset.joinedRecords.map(record => Number(record.bio_value)).filter(Number.isFinite);
+  let min = Math.min(...values);
+  let max = Math.max(...values);
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    min = 0;
+    max = 1;
+  }
+  if (min === max) {
+    min -= 0.5;
+    max += 0.5;
+  }
+  const info = BIO_TYPE_INFO[dataset.type];
+  return {
+    min,
+    max,
+    colors: config.bioPalettes[info.paletteKey] || ['#2444a7', '#a92323']
+  };
+}
+
+function drawBioColoredRoute(dataset, scale) {
+  const records = dataset.joinedRecords;
+  if (records.length < 2) return;
+  for (let index = 0; index < records.length - 1; index += 1) {
+    const current = records[index];
+    const next = records[index + 1];
+    if (next.gps_index < current.gps_index) continue;
+    const coordinates = gpsRecords
+      .slice(current.gps_index, next.gps_index + 1)
+      .map(record => [record.latitude, record.longitude]);
+    if (coordinates.length < 2) continue;
+    const valueA = Number(current.bio_value);
+    const valueB = Number(next.bio_value);
+    const value = Number.isFinite(valueA) && Number.isFinite(valueB) ? (valueA + valueB) / 2 : valueA;
+    L.polyline(coordinates, {
+      color: colorForContinuousValue(value, scale),
+      weight: 7,
+      opacity: 0.88
+    }).addTo(bioRouteLayer);
+  }
+}
+
+function drawBioPoints(dataset, scale) {
+  dataset.joinedRecords.forEach(record => {
+    const color = colorForContinuousValue(Number(record.bio_value), scale);
+    const icon = L.divIcon({
+      className: 'bio-marker-wrapper',
+      html: `<div class="bio-marker" style="background:${color}"></div>`,
+      iconSize: [11, 11],
+      iconAnchor: [5.5, 5.5],
+      popupAnchor: [0, -7]
+    });
+    L.marker([record.latitude, record.longitude], { icon })
+      .bindPopup(buildBioPopup(dataset, record))
+      .addTo(bioPointLayer);
+  });
+}
+
+function renderBioLegend(dataset, scale) {
+  const info = BIO_TYPE_INFO[dataset.type];
+  const gradient = `linear-gradient(to right, ${scale.colors.join(', ')})`;
+  const middle = (scale.min + scale.max) / 2;
+  els.legend.innerHTML = `
+    <span class="legend-title">凡例</span>
+    <div class="legend-gradient">
+      <div class="gradient-bar" style="background:${gradient}"></div>
+      <div class="gradient-labels">
+        <span>${formatBioValue(scale.min, info)}</span>
+        <span>${formatBioValue(middle, info)}</span>
+        <span>${formatBioValue(scale.max, info)}</span>
+      </div>
+    </div>`;
+}
+
+function buildBioPopup(dataset, record) {
+  const info = BIO_TYPE_INFO[dataset.type];
+  return `
+    <dl class="popup-grid">
+      <dt>ファイル</dt><dd>${escapeHtml(dataset.fileName)}</dd>
+      <dt>時刻</dt><dd>${escapeHtml(record.bio_timestamp)}</dd>
+      <dt>${dataset.type === 'mlx' ? 'Object_C' : 'Ear_HR_BPM_Window'}</dt><dd>${escapeHtml(formatBioValue(record.bio_value, info))}</dd>
+      <dt>GPS時刻</dt><dd>${escapeHtml(record.gps_timestamp)}</dd>
+      <dt>GPS精度</dt><dd>${escapeHtml(formatAccuracy(record.accuracy))}</dd>
+      <dt>GPS時刻差</dt><dd>${escapeHtml(formatSeconds(record.time_difference_ms))}</dd>
+    </dl>`;
+}
+
 function buildSubjectivePopup(record) {
   return `
     <dl class="popup-grid">
@@ -1095,12 +1345,17 @@ async function saveMapAsPng() {
 function activeMapFileSuffix() {
   if (activeCategory === 'subjective') return currentSubjectiveMetric;
   if (activeCategory === 'environment') return `weather_${currentWeatherMetric}`;
+  if (activeCategory === 'bio') {
+    const dataset = getCurrentBioDataset();
+    return dataset ? `bio_${dataset.type}_${sanitizeFileName(dataset.fileName.replace(/\.csv$/i, ''))}` : 'bio';
+  }
   return 'gps_track';
 }
 
 function saveActiveJoinedCsv() {
   if (activeCategory === 'subjective') saveSubjectiveJoinedCsv();
   else if (activeCategory === 'environment') saveWeatherJoinedCsv();
+  else if (activeCategory === 'bio') saveBioJoinedCsv();
 }
 
 function saveSubjectiveJoinedCsv() {
@@ -1120,6 +1375,18 @@ function saveWeatherJoinedCsv() {
   downloadRecordsCsv(`${sessionBaseName}_weather_gps_joined.csv`, columns, joinedWeatherRecords);
 }
 
+function saveBioJoinedCsv() {
+  const dataset = getCurrentBioDataset();
+  if (!dataset) return;
+  const columns = dataset.type === 'mlx'
+    ? ['source_file', 'bio_type', 'bio_timestamp', 'object_c', 'sensor_elapsed_ms', 'recv_jst',
+      'gps_timestamp', 'time_difference_ms', 'latitude', 'longitude', 'accuracy', 'heading', 'speed']
+    : ['source_file', 'bio_type', 'bio_timestamp', 'window_center', 'ear_hr_bpm_window', 'ear_hr_usable',
+      'gps_timestamp', 'time_difference_ms', 'latitude', 'longitude', 'accuracy', 'heading', 'speed'];
+  const stem = sanitizeFileName(dataset.fileName.replace(/\.csv$/i, ''));
+  downloadRecordsCsv(`${sessionBaseName}_${stem}_gps_joined.csv`, columns, dataset.joinedRecords);
+}
+
 function downloadRecordsCsv(filename, columns, records) {
   const lines = [columns.join(',')];
   records.forEach(record => {
@@ -1137,12 +1404,14 @@ function determineSessionBaseName() {
 }
 
 function clearAll() {
-  selectedFiles = { gps: null, subjective: null, weather: null };
+  selectedFiles = { gps: null, subjective: null, weather: null, mlx: [], ppg: [] };
   gpsRecords = [];
   subjectiveRecords = [];
   weatherRecords = [];
   joinedSubjectiveRecords = [];
   joinedWeatherRecords = [];
+  bioDatasets = [];
+  currentBioDatasetIndex = 0;
   activeCategory = 'gps';
   currentSubjectiveMetric = 'thermal_sensation';
   currentWeatherMetric = 'temperature';
@@ -1250,6 +1519,26 @@ function toNullableNumber(value) {
   if (text === '' || text === '--') return '';
   const number = Number(text);
   return Number.isFinite(number) ? number : '';
+}
+
+function parseBoolean(value) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
+  if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
+  return false;
+}
+
+function formatLocalTimeWithMs(epochMs) {
+  const d = new Date(epochMs);
+  const pad = (n, width = 2) => String(n).padStart(width, '0');
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} `
+    + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+}
+
+function formatBioValue(value, info) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '―';
+  return `${number.toFixed(info.digits)} ${info.unit}`;
 }
 
 function triggerLabel(value) {

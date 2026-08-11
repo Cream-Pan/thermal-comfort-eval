@@ -1,7 +1,10 @@
 {
   "appName": "温熱環境GPSマッピング",
   "map": {
-    "defaultCenter": [35.681236, 139.767125],
+    "defaultCenter": [
+      35.681236,
+      139.767125
+    ],
     "defaultZoom": 16,
     "maxZoom": 19,
     "tileUrl": "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
@@ -33,9 +36,52 @@
     }
   },
   "weatherPalettes": {
-    "temperature": ["#2444a7", "#4aa8cf", "#d9e8b4", "#f2c14e", "#e36b4f", "#a92323"],
-    "humidity": ["#f4e7c5", "#c9e5dd", "#7fc7c9", "#3a91b3", "#24528c"],
-    "wind_speed": ["#edf4f7", "#b8d9e5", "#70b5d1", "#2d84b5", "#14527c"],
-    "heat_index": ["#c8e6a0", "#f1dc72", "#f2a65a", "#d95745", "#8b1e5a"]
+    "temperature": [
+      "#2444a7",
+      "#4aa8cf",
+      "#d9e8b4",
+      "#f2c14e",
+      "#e36b4f",
+      "#a92323"
+    ],
+    "humidity": [
+      "#f4e7c5",
+      "#c9e5dd",
+      "#7fc7c9",
+      "#3a91b3",
+      "#24528c"
+    ],
+    "wind_speed": [
+      "#edf4f7",
+      "#b8d9e5",
+      "#70b5d1",
+      "#2d84b5",
+      "#14527c"
+    ],
+    "heat_index": [
+      "#c8e6a0",
+      "#f1dc72",
+      "#f2a65a",
+      "#d95745",
+      "#8b1e5a"
+    ]
+  },
+  "bioPalettes": {
+    "mlx_object": [
+      "#2444a7",
+      "#4aa8cf",
+      "#d9e8b4",
+      "#f2c14e",
+      "#e36b4f",
+      "#a92323"
+    ],
+    "ear_hr": [
+      "#2b6cb0",
+      "#63b3ed",
+      "#68d391",
+      "#f6e05e",
+      "#ed8936",
+      "#c53030"
+    ]
   }
 }

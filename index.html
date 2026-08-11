@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#46a15f">
-  <meta name="description" content="GPS，主観評価，Kestrel気象データを地図上に表示するWebApp">
+  <meta name="description" content="GPS，主観評価，Kestrel気象データ，MLX／PPG生体情報を地図上に表示するWebApp">
   <title>温熱環境GPSマッピング</title>
 
   <link
@@ -42,7 +42,7 @@
     <section class="panel">
       <h2 class="section-title">1．CSVファイルの読み込み</h2>
       <p class="description">
-        GPS CSVは必須です．主観評価CSVとKestrel Weather CSVは任意です．複数のCSVを1回のファイル選択でまとめて読み込めます．
+        GPS CSVは必須です．主観評価CSV，Kestrel Weather CSV，MLX CSV最大2ファイル，PPG_ACC CSV最大2ファイルは任意です．複数のCSVを1回のファイル選択でまとめて読み込めます．
         ファイルはサーバへ送信せず，ブラウザ内で処理します．
       </p>
 
@@ -50,7 +50,7 @@
         <span class="file-picker-title">CSVファイルを一括選択</span>
         <input id="batchFileInput" type="file" accept=".csv,text/csv" multiple>
         <span class="file-help">
-          GPS CSVは必須です．Subjective CSVとWeather CSVは任意です．1回の選択で最大3ファイルをまとめて選択できます．
+          GPS CSVは必須です．Subjective，Weather，MLX最大2ファイル，PPG_ACC最大2ファイルをまとめて選択できます．
         </span>
       </label>
 
@@ -66,6 +66,14 @@
         <div class="detected-file-row">
           <span class="detected-file-label">Weather CSV <small>任意</small></span>
           <span id="weatherFileName" class="file-name">未選択</span>
+        </div>
+        <div class="detected-file-row">
+          <span class="detected-file-label">MLX CSV <small>任意・最大2</small></span>
+          <span id="mlxFileNames" class="file-name">未選択</span>
+        </div>
+        <div class="detected-file-row">
+          <span class="detected-file-label">PPG_ACC CSV <small>任意・最大2</small></span>
+          <span id="ppgFileNames" class="file-name">未選択</span>
         </div>
       </div>
 
@@ -92,12 +100,24 @@
             <strong id="weatherPointCount" class="summary-value">―</strong>
           </div>
           <div class="summary-card">
+            <span class="summary-label">生体情報ファイル数</span>
+            <strong id="bioFileCount" class="summary-value">―</strong>
+          </div>
+          <div class="summary-card">
+            <span class="summary-label">生体情報点数</span>
+            <strong id="bioPointCount" class="summary-value">―</strong>
+          </div>
+          <div class="summary-card">
             <span class="summary-label">主観評価の最大時刻差</span>
             <strong id="subjectiveMaxTimeDifference" class="summary-value">―</strong>
           </div>
           <div class="summary-card">
             <span class="summary-label">Weatherの最大時刻差</span>
             <strong id="weatherMaxTimeDifference" class="summary-value">―</strong>
+          </div>
+          <div class="summary-card">
+            <span class="summary-label">生体情報の最大時刻差</span>
+            <strong id="bioMaxTimeDifference" class="summary-value">―</strong>
           </div>
         </div>
       </section>
@@ -116,6 +136,9 @@
           </button>
           <button id="environmentCategoryTab" class="category-tab" type="button" data-category="environment">
             環境評価（M1）
+          </button>
+          <button id="bioCategoryTab" class="category-tab" type="button" data-category="bio">
+            生体情報
           </button>
         </div>
 
@@ -174,8 +197,29 @@
           </div>
         </div>
 
+        <div id="bioControlArea" class="category-control-area hidden">
+          <div class="bio-file-control">
+            <label for="bioFileSelect">表示する生体情報ファイル</label>
+            <select id="bioFileSelect" class="bio-file-select" disabled></select>
+          </div>
+          <div class="map-controls">
+            <label class="switch-control">
+              <input id="bioShowTrackToggle" type="checkbox" checked>
+              <span>GPS軌跡を表示</span>
+            </label>
+            <label class="switch-control">
+              <input id="bioColorRouteToggle" type="checkbox" checked>
+              <span>生体情報経路を色分け</span>
+            </label>
+            <label class="switch-control">
+              <input id="bioPointToggle" type="checkbox">
+              <span>生体情報測定点を表示</span>
+            </label>
+          </div>
+        </div>
+
         <div id="gpsOnlyNotice" class="info-note hidden">
-          GPS軌跡を表示しています．Subjective CSVまたはWeather CSVを追加すると，評価マップを表示できます．
+          GPS軌跡を表示しています．Subjective，Weather，MLX，PPG_ACC CSVを追加すると，各評価マップを表示できます．
         </div>
 
         <div id="mapCaptureArea" class="map-capture-area">
@@ -190,6 +234,9 @@
             </div>
             <div id="environmentShapeGuide" class="shape-guide hidden">
               <span><i class="shape-sample weather-dot"></i>Kestrel測定点</span>
+            </div>
+            <div id="bioShapeGuide" class="shape-guide hidden">
+              <span><i class="shape-sample bio-dot"></i>生体情報測定点</span>
             </div>
           </div>
           <div id="map"></div>
