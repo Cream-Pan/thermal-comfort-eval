@@ -25,6 +25,9 @@
     src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"
     defer
   ></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -40,17 +43,17 @@
     <div id="messageArea" class="message-area" aria-live="polite"></div>
 
     <section class="panel">
-      <h2 class="section-title">1．CSVファイルの読み込み</h2>
+      <h2 class="section-title">1．実験データの読み込み</h2>
       <p class="description">
-        GPS CSVは必須です．主観評価CSV，Kestrel Weather CSV，SwitchBot固定点CSV最大3ファイル，MLX CSV最大2ファイル，PPG_ACC CSV最大2ファイルは任意です．複数のCSVを1回のファイル選択でまとめて読み込めます．
+        VitBuds SliderのZIPを優先して読み込めます．ZIPにはSubjective CSVとGPS CSVを格納してください．Weather，SwitchBot，MLX，PPG_ACCは必要に応じてCSVを追加できます．各CSVを個別に選択する従来の方法にも対応します．
         ファイルはサーバへ送信せず，ブラウザ内で処理します．
       </p>
 
       <label id="batchFilePicker" class="file-picker batch-file-picker">
-        <span class="file-picker-title">CSVファイルを一括選択</span>
-        <input id="batchFileInput" type="file" accept=".csv,text/csv" multiple>
+        <span class="file-picker-title">ZIPまたはCSVファイルを選択</span>
+        <input id="batchFileInput" type="file" accept=".zip,application/zip,.csv,text/csv" multiple>
         <span class="file-help">
-          GPS CSVは必須です．Subjective，Weather，SwitchBot最大3ファイル，MLX最大2ファイル，PPG_ACC最大2ファイルをまとめて選択できます．
+          ZIPを使う場合は同一セッションのSubjective CSVとGPS CSVを含めてください．追加のWeather，SwitchBot最大3ファイル，MLX最大2ファイル，PPG_ACC最大2ファイルはCSVで一緒に選択できます．
         </span>
       </label>
 
@@ -142,6 +145,13 @@
           </div>
         </div>
 
+        <div class="view-mode-tabs" role="tablist" aria-label="表示モード">
+          <button id="mapViewModeButton" class="view-mode-tab active" type="button" aria-pressed="true">地図表示</button>
+          <button id="timeSeriesViewModeButton" class="view-mode-tab" type="button" aria-pressed="false" disabled>時系列表示</button>
+        </div>
+
+        <div id="mapModeContainer">
+
         <div class="category-tabs" role="tablist" aria-label="マップ種別">
           <button id="subjectiveCategoryTab" class="category-tab" type="button" data-category="subjective">
             主観評価
@@ -177,6 +187,10 @@
             <label class="switch-control">
               <input id="selfChangeToggle" type="checkbox" checked>
               <span>変動による評価</span>
+            </label>
+            <label class="switch-control">
+              <input id="eventEvaluationToggle" type="checkbox" checked>
+              <span>任意評価</span>
             </label>
           </div>
 
@@ -292,6 +306,7 @@
             <div id="subjectiveShapeGuide" class="shape-guide hidden">
               <span><i class="shape-sample circle"></i>定期地点評価</span>
               <span><i class="shape-sample diamond"></i>変動による評価</span>
+              <span><i class="shape-sample event-evaluation"></i>任意評価</span>
             </div>
             <div id="environmentShapeGuide" class="shape-guide hidden">
               <span><i class="shape-sample weather-dot"></i>Kestrel測定点</span>
@@ -311,6 +326,32 @@
           <button id="savePngButton" type="button">地図をPNG保存</button>
           <button id="saveJoinedCsvButton" type="button" disabled>結合CSVを保存</button>
           <button id="fitMapButton" class="secondary-button" type="button">全経路を表示</button>
+        </div>
+        </div>
+
+        <div id="timeSeriesModeContainer" class="time-series-mode hidden">
+          <p class="info-note">表示する項目を選択してください．気温と湿度は固定環境・移動環境を同じグラフで比較し，異なる単位の項目は別のグラフに並べます．Shift＋ドラッグで時間範囲を拡大，Ctrl＋ドラッグで横移動，Ctrl＋ホイールまたはピンチでズームできます．下の操作ボタンでも全グラフを同じ範囲に移動できます．記録間の値は補間しません．</p>
+          <div class="series-picker-panel">
+            <div class="series-picker-heading">
+              <h3>表示する項目</h3>
+              <div class="series-picker-actions">
+                <button id="selectAllTimeSeriesButton" class="secondary-button" type="button">全項目を選択</button>
+                <button id="clearTimeSeriesSelectionButton" class="secondary-button" type="button">選択を解除</button>
+              </div>
+            </div>
+            <div id="timeSeriesSeriesPicker" class="series-picker"></div>
+          </div>
+          <div class="time-series-navigation">
+            <button id="panTimeSeriesBackwardButton" class="secondary-button" type="button" aria-label="前の時間帯へ">← 前へ</button>
+            <button id="zoomOutTimeSeriesButton" class="secondary-button" type="button" aria-label="縮小">−</button>
+            <button id="zoomInTimeSeriesButton" class="secondary-button" type="button" aria-label="拡大">＋</button>
+            <button id="panTimeSeriesForwardButton" class="secondary-button" type="button" aria-label="次の時間帯へ">次へ →</button>
+            <button id="resetTimeSeriesRangeButton" class="secondary-button" type="button">全期間</button>
+            <span id="timeSeriesRangeLabel" class="time-series-range-label">―</span>
+          </div>
+          <div id="timeSeriesEmptyMessage" class="info-note hidden">表示する項目を選択してください．</div>
+          <div id="timeSeriesChartsContainer" class="time-series-grid"></div>
+          <div id="subjectiveEventTimeline" class="event-timeline"></div>
         </div>
       </section>
 

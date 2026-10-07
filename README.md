@@ -2,11 +2,11 @@
 
 # 温熱環境GPSマッピング
 
-温熱環境GPSマッピングは，屋外歩行実験で取得した GPS，主観評価，Kestrel 5500 の移動型気象情報，SwitchBot 温湿度計プラスの固定点環境情報，耳装着型デバイスの生体情報を統合し，地図上へ可視化する Web アプリケーションである．
+温熱環境GPSマッピングは，実験で取得した GPS，主観評価，Kestrel 5500 の移動型気象情報，SwitchBot 温湿度計プラスの固定点環境情報，耳装着型デバイスの生体情報を統合し，地図表示と時系列表示を切り替えて解析する Web アプリケーションである．
 
-GPS CSV を必須入力とし，Subjective CSV，Weather CSV，SwitchBot CSV，MLX CSV，PPG_ACC CSV を任意で読み込む．主観評価では温冷感，温熱的快・不快，温熱選好を表示する．環境評価では，Kestrel 5500 を用いた移動環境 M1 と，SwitchBot 温湿度計プラスを用いた固定点環境 M0 を切り替えて表示する．生体情報では，MLX の鼓膜方向温度 `Object_C` と，使用可能と判定した耳 PPG の心拍数 `Ear_HR_BPM_Window` を表示する．
+VitBuds Slider が出力する ZIP を優先して読み込み，ZIP 内の Subjective CSV と GPS CSV を一組として扱う．それらを個別の CSV として選ぶ方法にも対応する．Weather CSV，SwitchBot CSV，MLX CSV，PPG_ACC CSV は必要に応じて追加する．主観評価では温冷感と温熱的快・不快を表示し，旧形式の Subjective CSV では温熱選好も表示する．環境評価では，Kestrel 5500 を用いた移動環境 M1 と，SwitchBot 温湿度計プラスを用いた固定点環境 M0 を切り替えて表示する．生体情報では，MLX の鼓膜方向温度 `Object_C` と，使用可能と判定した耳 PPG の心拍数 `Ear_HR_BPM_Window` を表示する．
 
-Subjective，Weather，MLX，PPG_ACC は各データ時刻に最も近い GPS 点へ対応付ける．SwitchBot は既知の固定座標へ配置し，GPS との位置対応付けや固定点間の空間補間は行わない．Subjective CSV が存在する場合は，`START` 評価の Submit 時刻から `RECOVERY_END` 評価の Submit 時刻までを実験範囲とし，GPS，Weather，SwitchBot，MLX，PPG_ACC を同じ時間範囲へ制限して可視化する．
+地図表示では Subjective，Weather，MLX，PPG_ACC を各データ時刻に最も近い GPS 点へ対応付ける．時系列表示では各記録を元の時刻に配置し，値を時間方向へ補間しない．SwitchBot は既知の固定座標へ配置し，GPS との位置対応付けや固定点間の空間補間は行わない．新形式の Subjective CSV では GPS と主観評価の時刻範囲を解析範囲とし，旧形式では `START` 評価の Submit 時刻から `RECOVERY_END` 評価の Submit 時刻までを解析範囲とする．
 
 ---
 
@@ -18,6 +18,7 @@ Subjective，Weather，MLX，PPG_ACC は各データ時刻に最も近い GPS �
   <img src="https://img.shields.io/badge/-JavaScript-F7DF1E.svg?logo=javascript&style=for-the-badge&logoColor=black">
   <img src="https://img.shields.io/badge/-CSV-217346.svg?style=for-the-badge&logoColor=white">
   <img src="https://img.shields.io/badge/-Leaflet-199900.svg?logo=leaflet&style=for-the-badge&logoColor=white">
+  <img src="https://img.shields.io/badge/-Chart.js-FF6384.svg?logo=chartdotjs&style=for-the-badge&logoColor=white">
   <img src="https://img.shields.io/badge/-OpenStreetMap-7EBC6F.svg?logo=openstreetmap&style=for-the-badge&logoColor=white">
   <img src="https://img.shields.io/badge/-PNG-5C7CFA.svg?style=for-the-badge&logoColor=white">
   <img src="https://img.shields.io/badge/-GitHub%20Pages-222222.svg?logo=githubpages&style=for-the-badge&logoColor=white">
@@ -43,6 +44,7 @@ Subjective，Weather，MLX，PPG_ACC は各データ時刻に最も近い GPS �
 - [PPGの使用条件](#ppgの使用条件)
 - [画面構成](#画面構成)
 - [マップ表示](#マップ表示)
+- [時系列表示](#時系列表示)
 - [CSV形式](#csv形式)
 - [出力](#出力)
 - [configjson](#configjson)
@@ -61,7 +63,7 @@ Subjective，Weather，MLX，PPG_ACC は各データ時刻に最も近い GPS �
 - 主観評価
   - 温冷感
   - 温熱的快・不快
-  - 温熱選好
+  - 温熱選好（旧形式のみ）
 - 環境評価
   - 移動環境 M1
     - 気温
@@ -75,7 +77,7 @@ Subjective，Weather，MLX，PPG_ACC は各データ時刻に最も近い GPS �
   - MLX：`Object_C`
   - PPG：`Ear_HR_BPM_Window`
 
-各 CSV は 1 回のファイル選択でまとめて読み込み，列名から自動的にファイル種別を判定する．SwitchBot CSV は列名から SwitchBot 形式を判定した後，ファイル名から固定点 1～3 を割り当てる．GPS のみを読み込んだ場合は GPS 軌跡のみを表示し，任意ファイルが存在する場合は対応するタブまたは表示モードを有効にする．
+ZIP または複数の CSV をまとめて読み込み，列名からファイル種別を自動判定する．ZIP を選んだ場合は，まず ZIP 内の Subjective CSV と GPS CSV を読み込む．SwitchBot CSV は列名から形式を判定した後，ファイル名から固定点 1～3 を割り当てる．GPS のみを読み込んだ場合は GPS 軌跡のみを表示し，任意ファイルが存在する場合は対応するタブまたは表示モードを有効にする．
 
 リポジトリ：`https://github.com/Cream-Pan/thermal-comfort-eval`
 
@@ -98,9 +100,9 @@ Subjective，Weather，MLX，PPG_ACC は各データ時刻に最も近い GPS �
 
 | ファイル | 内容 |
 |---|---|
-| `index.html` | CSV 読み込み画面，読み込み結果，3 種類の上位タブ，M0／M1 切替，各種操作 UI，一覧表 |
-| `style.css` | WebApp 全体のデザイン，マップ，タブ，固定点表示，凡例，テーブル，レスポンシブ表示 |
-| `app.js` | CSV 判別・解析，時刻変換，GPS 対応付け，SwitchBot 固定点処理，実験範囲抽出，Leaflet 描画，PNG / CSV 保存 |
+| `index.html` | ZIP／CSV 読み込み画面，地図／時系列の切替，各種操作 UI，一覧表 |
+| `style.css` | WebApp 全体のデザイン，地図，時系列グラフ，タブ，凡例，テーブル，レスポンシブ表示 |
+| `app.js` | ZIP／CSV 判別・解析，時刻変換，GPS 対応付け，地図／時系列描画，PNG / CSV 保存 |
 | `config.json` | 地図設定，各評価項目のカラーパレット，固定色尺度，SwitchBot 固定座標 |
 | `README.md` | 本ドキュメント |
 
@@ -118,10 +120,16 @@ Subjective，Weather，MLX，PPG_ACC は各データ時刻に最も近い GPS �
   - 地図タイルとして使用する．
 - html2canvas 1.4.1
   - 表示中の地図，タイトル，凡例を PNG として保存する際に使用する．
+- JSZip 3.10.1
+  - VitBuds Slider の ZIP から Subjective CSV と GPS CSV をブラウザ内で展開する．
+- Chart.js 4.4.7
+  - 時系列データを散布図として表示する．
+- chartjs-plugin-zoom 2.2.0
+  - 時系列グラフの拡大・縮小と横移動を行う．
 
 CSV の読み込み，解析，時刻対応付け，固定点データ処理，CSV 出力はブラウザ内の JavaScript で実行する．選択した実験 CSV をアプリ独自のサーバへ送信する処理は行わない．
 
-Leaflet，html2canvas，OpenStreetMap タイルを外部から読み込むため，地図表示および PNG 保存にはインターネット接続が必要である．
+Leaflet，html2canvas，JSZip，Chart.js，chartjs-plugin-zoom，OpenStreetMap タイルを外部から読み込むため，地図・時系列表示および PNG 保存にはインターネット接続が必要である．
 
 <p align="right">(<a href="#top">トップへ戻る</a>)</p>
 
@@ -129,10 +137,11 @@ Leaflet，html2canvas，OpenStreetMap タイルを外部から読み込むため
 
 ## 入力ファイル
 
-1 回のファイル選択で複数の CSV をまとめて選択できる．ドラッグ＆ドロップにも対応する．
+VitBuds Slider の ZIP を優先して読み込める．ZIP には同一セッションの Subjective CSV と GPS CSV を格納する．ZIP と追加の環境・生体情報 CSV を同時に選択できるほか，CSV を個別にまとめて選択する従来の方法にも対応する．ドラッグ＆ドロップにも対応する．
 
 | ファイル種別 | 必須／任意 | 最大数 | 主な用途 |
 |---|---|---:|---|
+| VitBuds Slider ZIP | GPS／Subjective の代わり | 1 | Subjective CSV と GPS CSV の優先読み込み |
 | GPS CSV | 必須 | 1 | GPS 軌跡，Subjective／Weather／生体情報の位置基準 |
 | Subjective CSV | 任意 | 1 | 主観評価マッピング，実験範囲の決定 |
 | Weather CSV | 任意 | 1 | Kestrel 5500 による移動環境 M1 |
@@ -150,7 +159,7 @@ SwitchBot CSV は CSV の列名から形式を判定した後，ファイル名�
 温湿度計プラス 3_data.csv → 固定点3
 ```
 
-同じ種類の GPS，Subjective，Weather CSV を複数選択した場合はエラーとする．SwitchBot は固定点 1～3 をそれぞれ 1 ファイルまで，MLX と PPG_ACC はそれぞれ最大 2 ファイルまで読み込める．
+ZIP 内の CSV は `{session_id}_subjective.csv` と `{session_id}_gps.csv` の各 1 ファイルとし，session_id が一致する必要がある．ZIP は 1 回に 1 つまで読み込める．ZIP と別途選択した同種 CSV が重複する場合はエラーとする．同じ種類の GPS，Subjective，Weather CSV を複数選択した場合もエラーとする．SwitchBot は固定点 1～3 をそれぞれ 1 ファイルまで，MLX と PPG_ACC はそれぞれ最大 2 ファイルまで読み込める．
 
 <p align="right">(<a href="#top">トップへ戻る</a>)</p>
 
@@ -163,13 +172,32 @@ SwitchBot CSV は CSV の列名から形式を判定した後，ファイル名�
 ### GPS CSV
 
 ```text
+experiment_id
 timestamp
 latitude
 longitude
 ```
 
+`experiment_id` は新形式の Subjective CSV と組み合わせて読み込む場合に必要である．旧形式の GPS CSV では省略できる．
+
 ### Subjective CSV
 
+新形式では以下の列を使用する．回答は数値ではなくカテゴリコードで記録する．
+
+```text
+experiment_id
+trigger_type
+segment_id
+evaluation_started_at
+evaluation_submitted_at
+response_duration_ms
+thermal_sensation
+thermal_comfort
+```
+
+旧形式の CSV も読み込める．旧形式には `experiment_id` がなく，`thermal_preference` 列を含む．新形式の ZIP ではファイル名中の session_id が2つの CSV で一致し，両 CSV の `experiment_id` も一致することを検証する．
+
+旧形式では以下の列を必要とする．
 ```text
 trigger_type
 segment_id
@@ -227,7 +255,7 @@ Ear_HR_Usable
 
 ## 解析範囲
 
-Subjective CSV が存在する場合は，実験全体の時間範囲を以下で定義する．
+旧形式の Subjective CSV が存在する場合は，実験全体の時間範囲を以下で定義する．
 
 ```text
 開始：segment_id = START の evaluation_submitted_at
@@ -247,7 +275,7 @@ Subjective CSV が存在する場合は，実験全体の時間範囲を以下�
 
 そのため，実験開始前や実験終了後に取得されたデータはマッピング対象から除外する．
 
-Subjective CSV が存在しない場合は，GPS CSV の開始時刻から終了時刻までを解析範囲とする．Weather，SwitchBot，MLX，PPG_ACC も同じ GPS 時間範囲へ制限して使用する．
+新形式の Subjective CSV を読み込む場合は，GPS と Subjective の開始時刻のうち早い時刻から，終了時刻のうち遅い時刻までを解析範囲とする．旧形式の Subjective CSV が存在しない場合は，GPS CSV の開始時刻から終了時刻までを解析範囲とする．Weather，SwitchBot，MLX，PPG_ACC も同じ時間範囲へ制限して使用する．
 
 <p align="right">(<a href="#top">トップへ戻る</a>)</p>
 
@@ -588,9 +616,9 @@ FALSE の行，時刻を解析できない行，`Ear_HR_BPM_Window` が数値で
 
 ## 画面構成
 
-### 1．CSVファイルの読み込み
+### 1．ZIP／CSVファイルの読み込み
 
-GPS，Subjective，Weather，SwitchBot，MLX，PPG_ACC CSV をまとめて選択する．
+VitBuds Slider の ZIP を優先して選択する．Subjective CSV と GPS CSV を個別に読み込む場合は，それらと Weather，SwitchBot，MLX，PPG_ACC CSV をまとめて選択する．
 
 ファイル選択後に，アプリが判別したファイル名を以下の分類ごとに表示する．
 
@@ -645,7 +673,7 @@ GPS のみを読み込んだ場合は GPS 軌跡のみを表示する．
 
 主観評価タブでは主観評価一覧，移動環境 M1 では Weather 一覧を表示する．
 
-主観評価一覧には，評価時刻，評価種別，区間，3 種類の主観評価，位置情報，GPS 精度，時刻差を表示する．
+主観評価一覧には，評価時刻，評価種別，区間，温冷感，温熱的快・不快，位置情報，GPS 精度，時刻差を表示する．旧形式では温熱選好を表示する．
 
 Weather 一覧には，Weather 時刻，気温，相対湿度，風速，暑さ指数，位置情報，GPS 精度，時刻差を表示する．
 
@@ -690,6 +718,16 @@ SwitchBot は固定座標へ CircleMarker として表示する．
 
 「全経路を表示」を押すと，解析対象 GPS 全体が画面内へ収まるよう地図範囲を調整する．
 
+---
+
+## 時系列表示
+
+「地図表示／時系列表示」切替から表示を変更する．時系列表示ではデータが存在する項目を選び，複数のグラフを同時に並べて確認できる．気温と相対湿度は移動環境（Kestrel）と固定点環境（SwitchBot）を同一グラフに重ね，風速，暑さ指数，GPS，鼓膜方向温度，耳PPG心拍数は別々のグラフに示す．主観評価は温冷感と温熱的快・不快の 2 項目を個別に表示する．
+
+全グラフの時間軸は連動する．Shift＋ドラッグで範囲を拡大し，Ctrl＋ドラッグで横移動する．Ctrl＋ホイール，ピンチ操作，または画面上の拡大・縮小・前後移動ボタンも利用できる．「全期間」ボタンで解析対象全体へ戻る．主観評価の縦軸は端点を「寒い／暑い」または「非常に不快／非常に快い」と表示し，ポイントにポインターを置いたときも数値スコアではなく評価語を表示する．
+
+記録間の値は補間しない．長時間記録の表示負荷を抑えるため，密な系列は表示範囲内で描画用の点だけを間引くが，読み込んだデータや CSV 出力は変更しない．主観評価のカテゴリコードは順序尺度の順序を示すために数値化し，連続量として扱わない．`comfortable_change` と `uncomfortable_change` などのイベントは数値化せず，時刻付きイベント一覧に表示する．選択時刻に対応する値の要約カードと地図上のカーソル表示は設けない．
+
 <p align="right">(<a href="#top">トップへ戻る</a>)</p>
 
 ---
@@ -701,18 +739,22 @@ SwitchBot は固定座標へ CircleMarker として表示する．
 最低限必要な列は以下である．
 
 ```csv
-timestamp,latitude,longitude,accuracy,heading,speed
+experiment_id,timestamp,latitude,longitude,accuracy,heading,speed
 ```
 
-`accuracy`，`heading`，`speed` は表示・出力に利用するが，ファイル判別上の必須列は `timestamp`，`latitude`，`longitude` である．
+新形式では `experiment_id` も必要である．`accuracy`，`heading`，`speed` は表示・出力に利用するが，旧形式ではファイル判別上の必須列は `timestamp`，`latitude`，`longitude` である．
 
 ### Subjective CSV
 
+新形式は以下の列を持つ．
+
 ```csv
-trigger_type,segment_id,evaluation_started_at,evaluation_submitted_at,response_duration_ms,thermal_sensation,thermal_comfort,thermal_preference
+experiment_id,trigger_type,segment_id,evaluation_started_at,evaluation_submitted_at,response_duration_ms,thermal_sensation,thermal_comfort
 ```
 
-GPS 対応付けおよび実験範囲決定には `evaluation_submitted_at` を使用する．
+旧形式は `experiment_id` を含まず，末尾に `thermal_preference` 列を持つ．新形式の `thermal_sensation` と `thermal_comfort` は数値でなくカテゴリコードである．
+
+GPS 対応付けには `evaluation_submitted_at` を使用する．新形式の解析範囲は GPS と Subjective の記録時刻全体から決定し，旧形式では `START` から最後の `RECOVERY_END` までを使用する．
 
 ### Weather CSV
 
@@ -797,8 +839,10 @@ A_CW_20260802T153404_gps.csv
 主観評価タブで保存すると，以下の列を出力する．
 
 ```csv
-trigger_type,segment_id,evaluation_started_at,evaluation_submitted_at,response_duration_ms,thermal_sensation,thermal_comfort,thermal_preference,gps_timestamp,time_difference_ms,latitude,longitude,accuracy,heading,speed
+experiment_id,trigger_type,segment_id,evaluation_started_at,evaluation_submitted_at,response_duration_ms,thermal_sensation,thermal_comfort,gps_timestamp,time_difference_ms,latitude,longitude,accuracy,heading,speed
 ```
+
+旧形式の Subjective CSV の場合は，`experiment_id` を省略し，`thermal_preference` を含める．
 
 ファイル名は以下の形式である．
 
@@ -1022,19 +1066,17 @@ config.json
 
 GitHub Pages などの静的ホスティングで公開して使用することを想定する．Leaflet，html2canvas，OpenStreetMap を使用するため，インターネットへ接続できる環境で開く．
 
-### 2．CSVをまとめて選択する
+### 2．ZIP／CSVを選択する
 
-「CSVファイルを一括選択」から必要な CSV をまとめて選択する．
+「ZIPまたはCSVファイルを選択」から VitBuds Slider の ZIP を選ぶ．Weather，SwitchBot，MLX，PPG_ACC は追加の CSV として同時に選べる．個別の Subjective CSV と GPS CSV を使う場合は，従来どおり複数 CSV を選択する．
 
-最低限 GPS CSV が必要である．Subjective，Weather，SwitchBot，MLX，PPG_ACC は必要なものだけ追加する．
-
-ファイルを選択すると，アプリが各 CSV の列名を確認し，自動的に種類を判別する．SwitchBot はさらにファイル名から固定点 1～3 を判別する．
+ZIP 内の Subjective CSV と GPS CSV は，ファイル名中の session_id と `experiment_id` がそれぞれ2ファイル間で一致している必要がある．ファイルを選択すると，アプリが種類を自動判別する．SwitchBot はさらにファイル名から固定点 1～3 を判別する．
 
 ### 3．マッピングを作成する
 
 「マッピングを作成する」を押す．
 
-Subjective CSV が存在する場合は `START` Submit ～ `RECOVERY_END` Submit を実験範囲とする．存在しない場合は GPS 開始～終了を実験範囲とする．
+新形式の Subjective CSV では GPS と Subjective の記録時刻全体を解析範囲とする．旧形式では `START` Submit ～ `RECOVERY_END` Submit を使用し，Subjective CSV がない場合は GPS 開始～終了を使用する．
 
 Subjective，Weather，MLX，PPG_ACC は最寄り時刻の GPS 点へ対応付ける．SwitchBot は解析範囲で切り出した後，固定座標へ配置する．
 
@@ -1044,7 +1086,7 @@ GPS 点数，主観評価数，Weather 点数，固定点ファイル数・デ�
 
 ### 5．主観評価を確認する
 
-「主観評価」タブから，温冷感，温熱的快・不快，温熱選好を切り替える．
+「主観評価」タブから，温冷感と温熱的快・不快を切り替える．旧形式を読み込んだ場合のみ，温熱選好も切り替えられる．
 
 必要に応じて GPS 軌跡，評価間の経路色分け，定期地点評価，変動による評価を切り替える．
 
@@ -1090,11 +1132,13 @@ MLX では `Object_C`，PPG では使用可能な `Ear_HR_BPM_Window` を表示�
 ## 注意点
 
 * GPS CSV は必須である．
+* VitBuds Slider ZIP を使用する場合，ZIP 内に同じ session_id の Subjective CSV と GPS CSV が各 1 ファイル必要である．
 * Subjective，Weather，SwitchBot，MLX，PPG_ACC CSV は任意である．
 * SwitchBot は固定点 1～3 をそれぞれ最大 1 ファイル，MLX と PPG_ACC はそれぞれ最大 2 ファイルまで読み込める．
 * CSV の種類は原則として列名から判定する．列名を変更すると自動判別できない場合がある．
 * SwitchBot は列名からファイル形式を判定した後，ファイル名から固定点 1～3 を判定する．固定点番号が分からないファイル名では読み込めない．
-* Subjective CSV が存在する場合は，`START` の `evaluation_submitted_at` から最後の `RECOVERY_END` の `evaluation_submitted_at` までを実験範囲とする．Subjective CSV が存在しない場合は GPS 開始～終了を実験範囲とする．
+* 新形式では GPS と Subjective の記録時刻全体を解析範囲とする．旧形式では `START` の `evaluation_submitted_at` から最後の `RECOVERY_END` までを使用する．Subjective CSV がない場合は GPS 開始～終了を使用する．
+* 時系列グラフの主観評価値はカテゴリの順序を表し，連続量として測定した値ではない．イベント評価は数値化せず，イベント一覧に表示する．
 * 主観評価の GPS 対応付けには `evaluation_submitted_at` を使用する．一覧表およびポップアップでは `evaluation_started_at` も表示する．
 * Weather，MLX，PPG_ACC は各レコードの時刻に最も近い GPS 点へ対応付ける．
 * GPS との時刻差が大きいレコードを自動除外する閾値は設定していない．読み込み結果とポップアップの時刻差を確認する．
@@ -1112,7 +1156,7 @@ MLX では `Object_C`，PPG では使用可能な `Ear_HR_BPM_Window` を表示�
 * 主観評価の経路色分けは，前回評価が次回評価まで維持されたと仮定した補助表示であり，区間内の主観状態を連続測定したものではない．
 * Weather と生体情報の経路色分けでは，隣接する 2 測定点の平均値を区間色として使用する．
 * GPS の位置精度が低い区間では，マッピング位置にも同程度の位置誤差が含まれる．
-* OpenStreetMap の地図タイル，Leaflet，html2canvas を外部から読み込むため，インターネット接続が必要である．
+* OpenStreetMap の地図タイル，Leaflet，html2canvas，JSZip，Chart.js，chartjs-plugin-zoom を外部から読み込むため，インターネット接続が必要である．
 * PNG 保存時は地図タイルの読み込み完了後に保存する．
 * `config.json` を読み込めない場合は `app.js` 内の既定設定を使用する．
 * 本アプリは実験データの可視化・確認を目的とし，医療診断用途には使用しない．

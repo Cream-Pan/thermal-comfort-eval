@@ -51,6 +51,16 @@ const DEFAULT_CONFIG = {
 
 const GPS_REQUIRED_COLUMNS = ['timestamp', 'latitude', 'longitude'];
 const SUBJECTIVE_REQUIRED_COLUMNS = [
+  'experiment_id',
+  'trigger_type',
+  'segment_id',
+  'evaluation_started_at',
+  'evaluation_submitted_at',
+  'response_duration_ms',
+  'thermal_sensation',
+  'thermal_comfort'
+];
+const LEGACY_SUBJECTIVE_REQUIRED_COLUMNS = [
   'trigger_type',
   'segment_id',
   'evaluation_started_at',
@@ -70,22 +80,24 @@ const WEATHER_REQUIRED_COLUMNS = [
 const MLX_REQUIRED_COLUMNS = ['Object_C', 'RecvJST', 'SensorElapsed_ms'];
 const PPG_REQUIRED_COLUMNS = ['Window_Center', 'Ear_HR_BPM_Window', 'Ear_HR_Usable'];
 const SWITCHBOT_REQUIRED_COLUMNS = ['Date', 'Temperature_Celsius(℃)', 'Relative_Humidity(%)'];
+const MAX_TIME_SERIES_POINTS_PER_DATASET = 2500;
 
 const SUBJECTIVE_METRIC_INFO = {
   thermal_sensation: {
     title: '主観評価―温冷感',
     description: '青色ほど寒い側，赤色ほど暑い側の評価を示します．',
     labels: {
-      '-3': '寒い', '-2': '涼しい', '-1': 'やや涼しい', '0': 'どちらでもない',
-      '1': 'やや暖かい', '2': '暖かい', '3': '暑い'
+      cold: '寒い', cool: '涼しい', slightly_cool: 'やや涼しい', neutral: 'どちらでもない',
+      slightly_warm: 'やや暖かい', warm: '暖かい', hot: '暑い'
     }
   },
   thermal_comfort: {
     title: '主観評価―温熱的快・不快',
     description: '赤色ほど不快，緑色ほど快い評価を示します．',
     labels: {
-      '-3': '非常に不快', '-2': '不快', '-1': 'やや不快', '0': 'どちらでもない',
-      '1': 'やや快い', '2': '快い', '3': '非常に快い'
+      very_uncomfortable: '非常に不快', uncomfortable: '不快', slightly_uncomfortable: 'やや不快',
+      neutral: 'どちらでもない', slightly_comfortable: 'やや快い', comfortable: '快い',
+      very_comfortable: '非常に快い'
     }
   },
   thermal_preference: {
@@ -161,12 +173,68 @@ const BIO_TYPE_INFO = {
   }
 };
 
+const EXPERIMENT_CHECKPOINTS = {
+  trial: [
+    ['SUN_START', '実験開始・日向開始時'],
+    ['SHADE_START', '日陰開始時'],
+    ['END', '実験終了時']
+  ],
+  experiment2: [
+    ['SUN1_START', '実験開始・日向①開始時'],
+    ['SUN1_5MIN', '日向①開始から5 min後'],
+    ['SUN1_10MIN', '日向①開始から10 min後'],
+    ['SHADE1_START', '日陰①開始時'],
+    ['SHADE1_5MIN', '日陰①開始から5 min後'],
+    ['SHADE1_10MIN', '日陰①開始から10 min後'],
+    ['BREAK_START', '室内休憩開始時'],
+    ['BREAK_10MIN', '室内休憩開始から10 min後'],
+    ['SHADE2_START', '日陰②開始時'],
+    ['SHADE2_5MIN', '日陰②開始から5 min後'],
+    ['SHADE2_10MIN', '日陰②開始から10 min後'],
+    ['SUN2_START', '日向②開始時'],
+    ['SUN2_5MIN', '日向②開始から5 min後'],
+    ['SUN2_10MIN_END', '日向②開始から10 min後・実験終了時']
+  ],
+  experiment3: [
+    ['POINT1_START', '実験開始・ポイント①開始時'],
+    ['POINT1_5MIN', 'ポイント①開始から5 min後'],
+    ['POINT1_10MIN', 'ポイント①開始から10 min後'],
+    ['POINT2_START', 'ポイント②開始時'],
+    ['POINT2_5MIN', 'ポイント②開始から5 min後'],
+    ['POINT2_10MIN_END', 'ポイント②開始から10 min後・実験終了時']
+  ]
+};
+
+const SUBJECTIVE_SCORE_MAP = {
+  thermal_sensation: {
+    cold: -3, cool: -2, slightly_cool: -1, neutral: 0,
+    slightly_warm: 1, warm: 2, hot: 3
+  },
+  thermal_comfort: {
+    very_uncomfortable: -3, uncomfortable: -2, slightly_uncomfortable: -1,
+    neutral: 0, slightly_comfortable: 1, comfortable: 2, very_comfortable: 3
+  },
+  thermal_preference: { cooler: -1, no_change: 0, warmer: 1 }
+};
+
+const SUBJECTIVE_SCORE_LABELS = {
+  thermal_sensation: {
+    '-3': '寒い', '-2': '涼しい', '-1': 'やや涼しい', '0': 'どちらでもない',
+    '1': 'やや暖かい', '2': '暖かい', '3': '暑い'
+  },
+  thermal_comfort: {
+    '-3': '非常に不快', '-2': '不快', '-1': 'やや不快', '0': 'どちらでもない',
+    '1': 'やや快い', '2': '快い', '3': '非常に快い'
+  }
+};
+
 let config = DEFAULT_CONFIG;
 let selectedFiles = {
   gps: null, subjective: null, weather: null,
   switchbot: { '1': null, '2': null, '3': null },
   mlx: [], ppg: []
 };
+let subjectiveSchema = 'v2';
 let gpsRecords = [];
 let subjectiveRecords = [];
 let weatherRecords = [];
@@ -186,6 +254,13 @@ let currentSwitchbotMetric = 'temperature';
 let switchbotDisplayMode = 'time';
 let currentSwitchbotTimeIndex = 0;
 let station1Position = 'A';
+let activeViewMode = 'map';
+let timeSeriesStartEpochMs = null;
+let timeSeriesEndEpochMs = null;
+let timeSeriesViewStartEpochMs = null;
+let timeSeriesViewEndEpochMs = null;
+let temporalCharts = {};
+let temporalChartDescriptors = [];
 
 let map = null;
 let tileLayer = null;
@@ -226,10 +301,16 @@ function cacheElements() {
     'loadButton', 'clearButton', 'resultSection',
     'gpsPointCount', 'evaluationCount', 'weatherPointCount', 'switchbotFileCount', 'switchbotPointCount', 'bioFileCount', 'bioPointCount',
     'subjectiveMaxTimeDifference', 'weatherMaxTimeDifference', 'bioMaxTimeDifference',
+    'mapViewModeButton', 'timeSeriesViewModeButton', 'mapModeContainer', 'timeSeriesModeContainer',
+    'timeSeriesSeriesPicker', 'timeSeriesChartsContainer', 'timeSeriesEmptyMessage',
+    'selectAllTimeSeriesButton', 'clearTimeSeriesSelectionButton',
+    'panTimeSeriesBackwardButton', 'zoomOutTimeSeriesButton', 'zoomInTimeSeriesButton',
+    'panTimeSeriesForwardButton', 'resetTimeSeriesRangeButton', 'timeSeriesRangeLabel',
+    'subjectiveEventTimeline',
     'subjectiveCategoryTab', 'environmentCategoryTab', 'bioCategoryTab',
     'subjectiveControlArea', 'environmentControlArea', 'bioControlArea', 'gpsOnlyNotice',
     'subjectiveShowTrackToggle', 'subjectiveColorRouteToggle',
-    'checkpointToggle', 'selfChangeToggle', 'routeColorNote',
+    'checkpointToggle', 'selfChangeToggle', 'eventEvaluationToggle', 'routeColorNote',
     'environmentM1Tab', 'environmentM0Tab', 'environmentM1Controls', 'environmentM0Controls',
     'environmentShowTrackToggle', 'weatherColorRouteToggle', 'weatherPointToggle',
     'switchbotShowTrackToggle', 'station1PositionSelect', 'switchbotTimeControl',
@@ -266,10 +347,23 @@ function bindEvents() {
   });
 
   els.batchFilePicker.addEventListener('drop', event => {
-    const csvFiles = Array.from(event.dataTransfer?.files || [])
-      .filter(file => file.name.toLowerCase().endsWith('.csv'));
-    handleBatchFiles(csvFiles);
+    const dataFiles = Array.from(event.dataTransfer?.files || [])
+      .filter(file => /\.(csv|zip)$/i.test(file.name));
+    handleBatchFiles(dataFiles);
   });
+
+  els.mapViewModeButton.addEventListener('click', () => switchViewMode('map'));
+  els.timeSeriesViewModeButton.addEventListener('click', () => switchViewMode('timeseries'));
+  els.selectAllTimeSeriesButton.addEventListener('click', () => setAllTimeSeriesSelection(true));
+  els.clearTimeSeriesSelectionButton.addEventListener('click', () => setAllTimeSeriesSelection(false));
+  els.timeSeriesSeriesPicker.addEventListener('change', event => {
+    if (event.target.matches('[data-time-series-id]')) renderSelectedTimeSeriesCharts();
+  });
+  els.panTimeSeriesBackwardButton.addEventListener('click', () => shiftTimeSeriesRange(-0.5));
+  els.panTimeSeriesForwardButton.addEventListener('click', () => shiftTimeSeriesRange(0.5));
+  els.zoomInTimeSeriesButton.addEventListener('click', () => scaleTimeSeriesRange(0.5));
+  els.zoomOutTimeSeriesButton.addEventListener('click', () => scaleTimeSeriesRange(2));
+  els.resetTimeSeriesRangeButton.addEventListener('click', resetTimeSeriesRange);
 
   els.loadButton.addEventListener('click', loadAndRender);
   els.clearButton.addEventListener('click', clearAll);
@@ -339,6 +433,7 @@ function bindEvents() {
     els.subjectiveColorRouteToggle,
     els.checkpointToggle,
     els.selfChangeToggle,
+    els.eventEvaluationToggle,
     els.environmentShowTrackToggle,
     els.weatherColorRouteToggle,
     els.weatherPointToggle,
@@ -433,6 +528,7 @@ function initializeMap() {
 
 async function handleBatchFiles(files) {
   selectedFiles = { gps: null, subjective: null, weather: null, switchbot: { '1': null, '2': null, '3': null }, mlx: [], ppg: [] };
+  subjectiveSchema = 'v2';
   updateFileSummary();
 
   if (files.length === 0) {
@@ -446,12 +542,22 @@ async function handleBatchFiles(files) {
   try {
     const unknownFiles = [];
     const detectedNames = [];
+    const zipFiles = files.filter(file => file.name.toLowerCase().endsWith('.zip'));
+    const standaloneCsvFiles = files.filter(file => file.name.toLowerCase().endsWith('.csv'));
+    if (zipFiles.length > 1) throw new Error('一度に読み込めるVitBuds SliderのZIPは1つです．');
 
-    for (const file of files) {
+    const candidateFiles = [];
+    if (zipFiles.length > 0) candidateFiles.push(...await extractSliderZip(zipFiles[0]));
+    candidateFiles.push(...standaloneCsvFiles);
+
+    for (const file of candidateFiles) {
       const text = await file.text();
       const type = detectCsvType(text);
 
       if (!type) {
+        if (/_(subjective|gps)\.csv$/i.test(file.name)) {
+          throw new Error(`${file.name}の列名が仕様と一致しません．SubjectiveまたはGPS CSVの形式を確認してください．`);
+        }
         unknownFiles.push(file.name);
         continue;
       }
@@ -488,7 +594,7 @@ async function handleBatchFiles(files) {
     updateFileSummary();
 
     if (!selectedFiles.gps) {
-      throw new Error('GPS CSVを確認できませんでした．timestamp，latitude，longitude列を含むCSVを選択してください．');
+      throw new Error('GPS CSVを確認できませんでした．ZIPまたはtimestamp，latitude，longitude列を含むCSVを選択してください．');
     }
 
     const optionalMessage = unknownFiles.length > 0
@@ -508,6 +614,43 @@ async function handleBatchFiles(files) {
   }
 }
 
+async function extractSliderZip(zipFile) {
+  if (typeof JSZip === 'undefined') {
+    throw new Error('ZIP読込ライブラリを読み込めませんでした．インターネット接続を確認してください．');
+  }
+
+  let archive;
+  try {
+    archive = await JSZip.loadAsync(zipFile);
+  } catch (error) {
+    throw new Error(`${zipFile.name}をZIPとして読み込めませんでした．`);
+  }
+
+  const csvEntries = Object.values(archive.files)
+    .filter(entry => !entry.dir && entry.name.toLowerCase().endsWith('.csv'));
+  const subjectiveEntries = csvEntries.filter(entry => /_subjective\.csv$/i.test(entry.name));
+  const gpsEntries = csvEntries.filter(entry => /_gps\.csv$/i.test(entry.name));
+  if (csvEntries.length !== 2 || subjectiveEntries.length !== 1 || gpsEntries.length !== 1) {
+    throw new Error('ZIPには「{session_id}_subjective.csv」と「{session_id}_gps.csv」を各1ファイル格納してください．');
+  }
+
+  const subjectiveName = subjectiveEntries[0].name.split('/').pop();
+  const gpsName = gpsEntries[0].name.split('/').pop();
+  const subjectiveSession = subjectiveName.replace(/_subjective\.csv$/i, '');
+  const gpsSession = gpsName.replace(/_gps\.csv$/i, '');
+  if (!subjectiveSession || subjectiveSession !== gpsSession) {
+    throw new Error('ZIP内のSubjective CSVとGPS CSVのsession_idが一致しません．');
+  }
+
+  const extractedFiles = [];
+  for (const entry of [subjectiveEntries[0], gpsEntries[0]]) {
+    const name = entry.name.split('/').pop();
+    const content = await entry.async('uint8array');
+    extractedFiles.push(new File([content], name, { type: 'text/csv;charset=utf-8' }));
+  }
+  return extractedFiles;
+}
+
 function detectCsvType(text) {
   const rows = parseCsv(text);
   if (rows.length === 0) return null;
@@ -518,6 +661,10 @@ function detectCsvType(text) {
   }
 
   if (SUBJECTIVE_REQUIRED_COLUMNS.every(column => firstHeaders.includes(column))) {
+    return 'subjective';
+  }
+
+  if (LEGACY_SUBJECTIVE_REQUIRED_COLUMNS.every(column => firstHeaders.includes(column))) {
     return 'subjective';
   }
 
@@ -601,11 +748,29 @@ async function loadAndRender() {
     };
     if (selectedFiles.subjective) {
       const subjectiveText = await selectedFiles.subjective.text();
-      validateCsvHeaders(subjectiveText, SUBJECTIVE_REQUIRED_COLUMNS, 'Subjective CSV');
+      const headers = (parseCsv(subjectiveText)[0] || []).map(normalizeHeader);
+      const requiredColumns = headers.includes('experiment_id')
+        ? SUBJECTIVE_REQUIRED_COLUMNS
+        : LEGACY_SUBJECTIVE_REQUIRED_COLUMNS;
+      validateCsvHeaders(subjectiveText, requiredColumns, 'Subjective CSV');
       subjectiveRecords = parseSubjectiveRecords(subjectiveText);
       if (subjectiveRecords.length === 0) throw new Error('有効な主観評価データがありません．');
+      configureSubjectiveMetricTabs();
 
-      experimentTimeRange = getExperimentTimeRange(subjectiveRecords);
+      validateExperimentIdentity(gpsRecords, subjectiveRecords);
+      if (subjectiveSchema === 'legacy') {
+        experimentTimeRange = getExperimentTimeRange(subjectiveRecords);
+      } else {
+        const subjectiveEpochs = subjectiveRecords.flatMap(record => [
+          record.started_epoch_ms,
+          record.submitted_epoch_ms
+        ]).filter(Number.isFinite);
+        experimentTimeRange = {
+          startEpochMs: Math.min(gpsRecords[0].epoch_ms, ...subjectiveEpochs),
+          endEpochMs: Math.max(gpsRecords[gpsRecords.length - 1].epoch_ms, ...subjectiveEpochs)
+        };
+      }
+
       gpsRecords = filterRecordsByTimeRange(
         gpsRecords,
         experimentTimeRange.startEpochMs,
@@ -700,10 +865,13 @@ async function loadAndRender() {
     renderSubjectiveTable();
     renderWeatherTable();
     renderMapLayers();
+    renderTimeSeriesCharts();
+    els.timeSeriesViewModeButton.disabled = typeof Chart === 'undefined';
 
     els.resultSection.classList.remove('hidden');
     requestAnimationFrame(() => {
       map.invalidateSize();
+      resizeTimeSeriesCharts();
       fitMapToData();
       els.resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
@@ -841,6 +1009,7 @@ function parseGpsRecords(text) {
       const longitude = Number(row.longitude);
       return {
         original_index: originalIndex,
+        experiment_id: normalizeHeader(row.experiment_id),
         timestamp: row.timestamp,
         epoch_ms: epochMs,
         latitude,
@@ -859,22 +1028,50 @@ function parseGpsRecords(text) {
 
 function parseSubjectiveRecords(text) {
   const rows = csvToObjects(parseCsv(text));
+  subjectiveSchema = rows.some(row => Object.prototype.hasOwnProperty.call(row, 'experiment_id'))
+    ? 'v2'
+    : 'legacy';
   return rows
     .map((row, index) => ({
       record_index: index,
+      experiment_id: normalizeHeader(row.experiment_id),
       trigger_type: normalizeHeader(row.trigger_type),
       segment_id: normalizeHeader(row.segment_id),
       evaluation_started_at: normalizeHeader(row.evaluation_started_at),
       evaluation_submitted_at: normalizeHeader(row.evaluation_submitted_at),
+      started_epoch_ms: parseTimestamp(row.evaluation_started_at),
       response_duration_ms: toNullableNumber(row.response_duration_ms),
-      thermal_sensation: toNullableNumber(row.thermal_sensation),
-      thermal_comfort: toNullableNumber(row.thermal_comfort),
+      thermal_sensation: normalizeHeader(row.thermal_sensation),
+      thermal_comfort: normalizeHeader(row.thermal_comfort),
       thermal_preference: normalizeHeader(row.thermal_preference),
       submitted_epoch_ms: parseTimestamp(row.evaluation_submitted_at),
       epoch_ms: parseTimestamp(row.evaluation_submitted_at)
     }))
     .filter(record => Number.isFinite(record.epoch_ms))
     .sort((a, b) => a.epoch_ms - b.epoch_ms);
+}
+
+function configureSubjectiveMetricTabs() {
+  const preferenceButton = document.querySelector('[data-subjective-metric="thermal_preference"]');
+  if (!preferenceButton) return;
+
+  const supportsPreference = subjectiveSchema === 'legacy';
+  preferenceButton.classList.toggle('hidden', !supportsPreference);
+  if (!supportsPreference && currentSubjectiveMetric === 'thermal_preference') {
+    currentSubjectiveMetric = 'thermal_sensation';
+    const sensationButton = document.querySelector('[data-subjective-metric="thermal_sensation"]');
+    if (sensationButton) setActiveMetricButton('[data-subjective-metric]', sensationButton);
+  }
+}
+
+function validateExperimentIdentity(gps, subjective) {
+  if (subjectiveSchema !== 'v2') return;
+  const gpsIds = new Set(gps.map(record => record.experiment_id));
+  const subjectiveIds = new Set(subjective.map(record => record.experiment_id));
+  if (gpsIds.size !== 1 || subjectiveIds.size !== 1 || ![...gpsIds][0]
+      || [...gpsIds][0] !== [...subjectiveIds][0]) {
+    throw new Error('新形式のSubjective CSVとGPS CSVでexperiment_idが一致しません．');
+  }
 }
 
 function getExperimentTimeRange(records) {
@@ -1107,6 +1304,522 @@ function clearMapLayers() {
     .forEach(layer => layer.clearLayers());
 }
 
+function switchViewMode(mode) {
+  activeViewMode = mode === 'timeseries' ? 'timeseries' : 'map';
+  const showTimeSeries = activeViewMode === 'timeseries';
+  els.mapModeContainer.classList.toggle('hidden', showTimeSeries);
+  els.timeSeriesModeContainer.classList.toggle('hidden', !showTimeSeries);
+  els.mapViewModeButton.classList.toggle('active', !showTimeSeries);
+  els.timeSeriesViewModeButton.classList.toggle('active', showTimeSeries);
+  els.mapViewModeButton.setAttribute('aria-pressed', String(!showTimeSeries));
+  els.timeSeriesViewModeButton.setAttribute('aria-pressed', String(showTimeSeries));
+
+  requestAnimationFrame(() => {
+    if (showTimeSeries) resizeTimeSeriesCharts();
+    else map.invalidateSize();
+  });
+}
+
+function legacyTemporalDataset(label, records, valueKey, color, yAxisID = 'y') {
+  return {
+    label,
+    data: records.filter(record => record[valueKey] !== '' && record[valueKey] !== null && record[valueKey] !== undefined)
+      .map(record => ({ x: record.epoch_ms, y: Number(record[valueKey]) }))
+      .filter(point => Number.isFinite(point.x) && Number.isFinite(point.y)),
+    backgroundColor: color,
+    borderColor: color,
+    pointRadius: 3,
+    pointHoverRadius: 5,
+    showLine: false,
+    yAxisID
+  };
+}
+
+function legacyCreateOrUpdateTimeSeriesChart(key, canvas, datasets, yScales = {}) {
+  if (typeof Chart === 'undefined' || !canvas) return;
+  const min = timeSeriesStartEpochMs;
+  const max = Math.max(timeSeriesEndEpochMs ?? min, min + 1);
+  const scales = {
+    x: {
+      type: 'linear',
+      min,
+      max,
+      title: { display: true, text: '時刻（端末のローカル時刻）' },
+      ticks: {
+        maxTicksLimit: 6,
+        callback: value => formatTimeAxis(Number(value))
+      }
+    },
+    ...yScales
+  };
+  const options = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    parsing: false,
+    plugins: {
+      legend: { display: datasets.length > 0, position: 'bottom' },
+      tooltip: {
+        callbacks: {
+          title: items => items.length ? formatLocalTimeWithMs(Number(items[0].parsed.x)) : ''
+        }
+      }
+    },
+    scales
+  };
+
+  if (!temporalCharts[key]) {
+    temporalCharts[key] = new Chart(canvas.getContext('2d'), {
+      type: 'scatter',
+      data: { datasets },
+      options
+    });
+    return;
+  }
+
+  temporalCharts[key].data.datasets = datasets;
+  temporalCharts[key].options.scales = scales;
+  temporalCharts[key].update('none');
+}
+
+function legacyRenderTimeSeriesCharts() {
+  if (typeof Chart === 'undefined') {
+    els.timeSeriesViewModeButton.disabled = true;
+    showMessage('時系列表示ライブラリを読み込めませんでした．インターネット接続を確認してください．', 'warning');
+    return;
+  }
+
+  timeSeriesStartEpochMs = experimentTimeRange?.startEpochMs ?? gpsRecords[0]?.epoch_ms ?? 0;
+  timeSeriesEndEpochMs = experimentTimeRange?.endEpochMs ?? gpsRecords[gpsRecords.length - 1]?.epoch_ms ?? timeSeriesStartEpochMs;
+
+  const gpsDatasets = [
+    temporalDataset('緯度（degree）', gpsRecords, 'latitude', '#2563eb', 'y'),
+    temporalDataset('経度（degree）', gpsRecords, 'longitude', '#dc5a45', 'y2')
+  ];
+  createOrUpdateTimeSeriesChart('gps', els.gpsTimeSeriesChart, gpsDatasets, {
+    y: {
+      type: 'linear', position: 'left', title: { display: true, text: '緯度（degree）' },
+      ticks: { callback: value => Number(value).toFixed(5) }
+    },
+    y2: {
+      type: 'linear', position: 'right', title: { display: true, text: '経度（degree）' },
+      grid: { drawOnChartArea: false }, ticks: { callback: value => Number(value).toFixed(5) }
+    }
+  });
+
+  const subjectiveMetrics = [
+    ['thermal_sensation', '温冷感', '#2878bd'],
+    ['thermal_comfort', '温熱的快・不快', '#41965d']
+  ];
+  if (subjectiveSchema === 'legacy' && subjectiveRecords.some(record => record.thermal_preference)) {
+    subjectiveMetrics.push(['thermal_preference', '温熱選好', '#d58a2a']);
+  }
+  const subjectiveDatasets = subjectiveMetrics.map(([metric, label, color]) => ({
+    label,
+    data: subjectiveRecords.map(record => ({
+      x: record.epoch_ms,
+      y: subjectiveScore(record[metric], metric)
+    })).filter(point => Number.isFinite(point.x) && point.y !== null),
+    backgroundColor: color,
+    borderColor: color,
+    pointRadius: 5,
+    pointHoverRadius: 7,
+    showLine: false
+  }));
+  createOrUpdateTimeSeriesChart('subjective', els.subjectiveTimeSeriesChart, subjectiveDatasets, {
+    y: {
+      type: 'linear', min: -3.5, max: 3.5,
+      title: { display: true, text: '回答カテゴリ（順序尺度）' },
+      ticks: {
+        stepSize: 1,
+        callback: value => Number(value) > 0 ? `＋${value}` : (Number(value) < 0 ? `−${Math.abs(Number(value))}` : '0')
+      }
+    }
+  });
+  renderSubjectiveEventTimeline();
+
+  const weatherDatasets = [
+    temporalDataset('気温（℃）', weatherRecords, 'temperature', '#d94841', 'y'),
+    temporalDataset('相対湿度（%）', weatherRecords, 'humidity', '#2878bd', 'yHumidity'),
+    temporalDataset('風速（km/h）', weatherRecords, 'wind_speed', '#24937a', 'yWind'),
+    temporalDataset('暑さ指数（℃）', weatherRecords, 'heat_index', '#a64ca6', 'y')
+  ];
+  createOrUpdateTimeSeriesChart('weather', els.weatherTimeSeriesChart, weatherDatasets, {
+    y: { type: 'linear', position: 'left', title: { display: true, text: '温度（℃）' } },
+    yHumidity: {
+      type: 'linear', position: 'right', title: { display: true, text: '相対湿度（%）' },
+      grid: { drawOnChartArea: false }
+    },
+    yWind: {
+      type: 'linear', position: 'right', offset: true,
+      title: { display: true, text: '風速（km/h）' }, grid: { drawOnChartArea: false }
+    }
+  });
+
+  const stationColors = ['#315da8', '#d16d35', '#3d8c62'];
+  const switchbotTemperatureDatasets = switchbotDatasets.map((dataset, index) =>
+    temporalDataset(`固定点${dataset.stationId} 気温（℃）`, dataset.records, 'temperature', stationColors[index % stationColors.length])
+  );
+  const switchbotHumidityDatasets = switchbotDatasets.map((dataset, index) =>
+    temporalDataset(`固定点${dataset.stationId} 相対湿度（%）`, dataset.records, 'humidity', stationColors[index % stationColors.length])
+  );
+  createOrUpdateTimeSeriesChart('switchbotTemperature', els.switchbotTemperatureTimeSeriesChart, switchbotTemperatureDatasets, {
+    y: { type: 'linear', title: { display: true, text: '気温（℃）' } }
+  });
+  createOrUpdateTimeSeriesChart('switchbotHumidity', els.switchbotHumidityTimeSeriesChart, switchbotHumidityDatasets, {
+    y: { type: 'linear', title: { display: true, text: '相対湿度（%）' } }
+  });
+
+  const mlxDatasets = bioDatasets.filter(dataset => dataset.type === 'mlx').map((dataset, index) =>
+    temporalDataset(dataset.fileName, dataset.records, 'object_c', stationColors[index % stationColors.length])
+  );
+  const ppgDatasets = bioDatasets.filter(dataset => dataset.type === 'ppg').map((dataset, index) =>
+    temporalDataset(dataset.fileName, dataset.records, 'ear_hr_bpm_window', stationColors[index % stationColors.length])
+  );
+  createOrUpdateTimeSeriesChart('mlx', els.mlxTimeSeriesChart, mlxDatasets, {
+    y: { type: 'linear', title: { display: true, text: 'Object_C（℃）' } }
+  });
+  createOrUpdateTimeSeriesChart('ppg', els.ppgTimeSeriesChart, ppgDatasets, {
+    y: { type: 'linear', title: { display: true, text: '心拍数（bpm）' } }
+  });
+
+  els.gpsTimeSeriesCard.classList.toggle('hidden', gpsRecords.length === 0);
+  els.subjectiveTimeSeriesCard.classList.toggle('hidden', subjectiveRecords.length === 0);
+  els.weatherTimeSeriesCard.classList.toggle('hidden', weatherRecords.length === 0);
+  els.switchbotTemperatureTimeSeriesCard.classList.toggle('hidden', switchbotDatasets.length === 0);
+  els.switchbotHumidityTimeSeriesCard.classList.toggle('hidden', switchbotDatasets.length === 0);
+  els.mlxTimeSeriesCard.classList.toggle('hidden', mlxDatasets.length === 0);
+  els.ppgTimeSeriesCard.classList.toggle('hidden', ppgDatasets.length === 0);
+}
+
+function renderTimeSeriesCharts() {
+  if (typeof Chart === 'undefined') {
+    els.timeSeriesViewModeButton.disabled = true;
+    showMessage('時系列表示ライブラリを読み込めませんでした．', 'warning');
+    return;
+  }
+
+  const records = [
+    ...gpsRecords, ...subjectiveRecords, ...weatherRecords,
+    ...switchbotDatasets.flatMap(dataset => dataset.records),
+    ...bioDatasets.flatMap(dataset => dataset.records)
+  ];
+  const epochs = records.map(record => Number(record.epoch_ms)).filter(Number.isFinite);
+  timeSeriesStartEpochMs = epochs.length ? epochs.reduce((minimum, epoch) => Math.min(minimum, epoch), Infinity) : 0;
+  timeSeriesEndEpochMs = epochs.length ? epochs.reduce((maximum, epoch) => Math.max(maximum, epoch), -Infinity) : timeSeriesStartEpochMs + 1;
+  if (timeSeriesEndEpochMs <= timeSeriesStartEpochMs) timeSeriesEndEpochMs = timeSeriesStartEpochMs + 1;
+  timeSeriesViewStartEpochMs = timeSeriesStartEpochMs;
+  timeSeriesViewEndEpochMs = timeSeriesEndEpochMs;
+  temporalChartDescriptors = buildTimeSeriesDescriptors();
+
+  els.timeSeriesSeriesPicker.replaceChildren();
+  temporalChartDescriptors.forEach(descriptor => {
+    const label = document.createElement('label');
+    label.className = 'series-picker-option';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = true;
+    checkbox.dataset.timeSeriesId = descriptor.id;
+    const text = document.createElement('span');
+    text.textContent = descriptor.title;
+    label.append(checkbox, text);
+    els.timeSeriesSeriesPicker.append(label);
+  });
+
+  renderSubjectiveEventTimeline();
+  els.subjectiveEventTimeline.classList.toggle('hidden', subjectiveRecords.length === 0);
+  renderSelectedTimeSeriesCharts();
+  updateTimeSeriesRangeLabel();
+}
+
+function buildTimeSeriesDescriptors() {
+  const stationColors = ['#315da8', '#d16d35', '#3d8c62'];
+  const descriptors = [];
+  const add = descriptor => { if (descriptor.hasData) descriptors.push(descriptor); };
+  const hasNumeric = (items, key) => items.some(record =>
+    record[key] !== '' && record[key] !== null && record[key] !== undefined && Number.isFinite(Number(record[key]))
+  );
+  const gpsScales = {
+    y: { type: 'linear', position: 'left', title: { display: true, text: '緯度（degree）' }, ticks: { callback: value => Number(value).toFixed(5) } },
+    y2: { type: 'linear', position: 'right', title: { display: true, text: '経度（degree）' }, grid: { drawOnChartArea: false }, ticks: { callback: value => Number(value).toFixed(5) } }
+  };
+  const subjectiveScale = (lowerLabel, upperLabel) => ({
+    y: {
+      type: 'linear', min: -3.5, max: 3.5, title: { display: true, text: '評価カテゴリ' },
+      ticks: {
+        count: 2,
+        autoSkip: false,
+        callback: value => Number(value) < 0 ? lowerLabel : upperLabel
+      }
+    }
+  });
+  const subjectiveDataset = (metric, title, color) => temporalDataset(
+    title, subjectiveRecords, record => subjectiveScore(record[metric], metric), color, 'y', 5
+  );
+  const subjectiveLabel = metric => value =>
+    SUBJECTIVE_SCORE_LABELS[metric]?.[String(Math.round(value))] ?? String(value);
+
+  add({
+    id: 'gps', title: 'GPS位置', hasData: gpsRecords.length > 0,
+    description: '緯度と経度を左右の軸に示します．', yScales: gpsScales,
+    datasets: () => [
+      temporalDataset('緯度（degree）', gpsRecords, 'latitude', '#2563eb'),
+      temporalDataset('経度（degree）', gpsRecords, 'longitude', '#dc5a45', 'y2')
+    ]
+  });
+  add({
+    id: 'temperature', title: '気温',
+    hasData: hasNumeric(weatherRecords, 'temperature') || switchbotDatasets.some(dataset => hasNumeric(dataset.records, 'temperature')),
+    description: '移動環境（Kestrel）と各固定点（SwitchBot）を同じ軸で比較します．',
+    yScales: { y: { type: 'linear', title: { display: true, text: '気温（℃）' } } },
+    datasets: () => [
+      ...(hasNumeric(weatherRecords, 'temperature') ? [temporalDataset('移動環境（Kestrel）', weatherRecords, 'temperature', '#d94841')] : []),
+      ...switchbotDatasets.map((dataset, index) => temporalDataset(`固定点${dataset.stationId}（SwitchBot）`, dataset.records, 'temperature', stationColors[index % 3]))
+    ]
+  });
+  add({
+    id: 'humidity', title: '相対湿度',
+    hasData: hasNumeric(weatherRecords, 'humidity') || switchbotDatasets.some(dataset => hasNumeric(dataset.records, 'humidity')),
+    description: '移動環境（Kestrel）と各固定点（SwitchBot）を同じ軸で比較します．',
+    yScales: { y: { type: 'linear', title: { display: true, text: '相対湿度（%）' } } },
+    datasets: () => [
+      ...(hasNumeric(weatherRecords, 'humidity') ? [temporalDataset('移動環境（Kestrel）', weatherRecords, 'humidity', '#2878bd')] : []),
+      ...switchbotDatasets.map((dataset, index) => temporalDataset(`固定点${dataset.stationId}（SwitchBot）`, dataset.records, 'humidity', stationColors[index % 3]))
+    ]
+  });
+  add({
+    id: 'wind_speed', title: '風速（Kestrel）', hasData: hasNumeric(weatherRecords, 'wind_speed'),
+    description: 'Kestrelで記録した風速を表示します．',
+    yScales: { y: { type: 'linear', title: { display: true, text: '風速（km/h）' } } },
+    datasets: () => [temporalDataset('移動環境（Kestrel）', weatherRecords, 'wind_speed', '#24937a')]
+  });
+  add({
+    id: 'heat_index', title: '暑さ指数（Kestrel）', hasData: hasNumeric(weatherRecords, 'heat_index'),
+    description: 'Kestrelが記録した暑さ指数を表示します．',
+    yScales: { y: { type: 'linear', title: { display: true, text: '暑さ指数（℃）' } } },
+    datasets: () => [temporalDataset('移動環境（Kestrel）', weatherRecords, 'heat_index', '#a64ca6')]
+  });
+  add({
+    id: 'thermal_sensation', title: '主観評価―温冷感',
+    hasData: subjectiveRecords.some(record => subjectiveScore(record.thermal_sensation, 'thermal_sensation') !== null),
+    description: 'カテゴリの順序を数値化した表示です．連続量として測定した値ではありません．',
+    formatTooltipValue: subjectiveLabel('thermal_sensation'),
+    yScales: subjectiveScale('寒い', '暑い'),
+    datasets: () => [subjectiveDataset('thermal_sensation', '温冷感', '#2878bd')]
+  });
+  add({
+    id: 'thermal_comfort', title: '主観評価―温熱的快・不快',
+    hasData: subjectiveRecords.some(record => subjectiveScore(record.thermal_comfort, 'thermal_comfort') !== null),
+    description: 'カテゴリの順序を数値化した表示です．連続量として測定した値ではありません．',
+    formatTooltipValue: subjectiveLabel('thermal_comfort'),
+    yScales: subjectiveScale('非常に不快', '非常に快い'),
+    datasets: () => [subjectiveDataset('thermal_comfort', '温熱的快・不快', '#41965d')]
+  });
+
+  const mlx = bioDatasets.filter(dataset => dataset.type === 'mlx' && hasNumeric(dataset.records, 'object_c'));
+  add({
+    id: 'mlx', title: '生体情報―鼓膜方向温度', hasData: mlx.length > 0,
+    description: 'MLX CSVのObject_Cを表示します．',
+    yScales: { y: { type: 'linear', title: { display: true, text: 'Object_C（℃）' } } },
+    datasets: () => mlx.map((dataset, index) => temporalDataset(dataset.fileName, dataset.records, 'object_c', stationColors[index % 3]))
+  });
+  const ppg = bioDatasets.filter(dataset => dataset.type === 'ppg' && hasNumeric(dataset.records, 'ear_hr_bpm_window'));
+  add({
+    id: 'ppg', title: '生体情報―耳PPG心拍数', hasData: ppg.length > 0,
+    description: '使用可能と判定された耳PPGの心拍数を表示します．',
+    yScales: { y: { type: 'linear', title: { display: true, text: '心拍数（bpm）' } } },
+    datasets: () => ppg.map((dataset, index) => temporalDataset(dataset.fileName, dataset.records, 'ear_hr_bpm_window', stationColors[index % 3]))
+  });
+  return descriptors;
+}
+
+function temporalDataset(label, records, valueKey, color, yAxisID = 'y', pointRadius = 3) {
+  const points = [];
+  records.forEach(record => {
+    const epoch = Number(record.epoch_ms);
+    const raw = typeof valueKey === 'function' ? valueKey(record) : record[valueKey];
+    const value = raw === '' || raw === null || raw === undefined ? NaN : Number(raw);
+    if (Number.isFinite(epoch) && epoch >= timeSeriesViewStartEpochMs && epoch <= timeSeriesViewEndEpochMs && Number.isFinite(value)) {
+      points.push({ x: epoch, y: value });
+    }
+  });
+  points.sort((left, right) => left.x - right.x);
+  const data = sampleTimeSeriesPoints(points);
+  const radius = points.length > 10000 ? 1.2 : points.length > 2500 ? 1.8 : pointRadius;
+  return { label, data, backgroundColor: color, borderColor: color, pointRadius: radius, pointHoverRadius: Math.max(4, radius + 2), showLine: false, yAxisID };
+}
+
+function sampleTimeSeriesPoints(points) {
+  if (points.length <= MAX_TIME_SERIES_POINTS_PER_DATASET) return points;
+  const bucketSize = Math.ceil(points.length / (MAX_TIME_SERIES_POINTS_PER_DATASET / 2));
+  const result = [];
+  for (let index = 0; index < points.length; index += bucketSize) {
+    const bucket = points.slice(index, index + bucketSize);
+    let low = bucket[0];
+    let high = bucket[0];
+    bucket.forEach(point => {
+      if (point.y < low.y) low = point;
+      if (point.y > high.y) high = point;
+    });
+    result.push(low);
+    if (high !== low) result.push(high);
+  }
+  return result;
+}
+
+function setAllTimeSeriesSelection(selected) {
+  els.timeSeriesSeriesPicker.querySelectorAll('[data-time-series-id]').forEach(input => { input.checked = selected; });
+  renderSelectedTimeSeriesCharts();
+}
+
+function renderSelectedTimeSeriesCharts() {
+  if (typeof Chart === 'undefined') return;
+  const ids = new Set(Array.from(els.timeSeriesSeriesPicker.querySelectorAll('[data-time-series-id]:checked'), input => input.dataset.timeSeriesId));
+  const selected = temporalChartDescriptors.filter(descriptor => ids.has(descriptor.id));
+  Object.values(temporalCharts).forEach(chart => chart.destroy());
+  temporalCharts = {};
+  els.timeSeriesChartsContainer.replaceChildren();
+  selected.forEach(descriptor => {
+    const card = document.createElement('article');
+    card.className = 'time-series-card';
+    const heading = document.createElement('h3');
+    heading.textContent = descriptor.title;
+    const description = document.createElement('p');
+    description.className = 'tiny-muted';
+    description.textContent = descriptor.description;
+    const plot = document.createElement('div');
+    plot.className = 'time-series-chart';
+    const canvas = document.createElement('canvas');
+    canvas.id = `timeSeriesChart_${descriptor.id}`;
+    plot.append(canvas);
+    card.append(heading, description, plot);
+    els.timeSeriesChartsContainer.append(card);
+    createOrUpdateTimeSeriesChart(descriptor, canvas);
+  });
+  els.timeSeriesEmptyMessage.classList.toggle('hidden', selected.length > 0);
+}
+
+function createOrUpdateTimeSeriesChart(descriptor, canvas) {
+  const datasets = descriptor.datasets();
+  const min = timeSeriesViewStartEpochMs;
+  const max = Math.max(timeSeriesViewEndEpochMs, min + 1);
+  const options = {
+    responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
+    plugins: {
+      legend: { display: datasets.length > 0, position: 'bottom' },
+      tooltip: {
+        callbacks: {
+          title: items => items.length ? formatLocalTimeWithMs(Number(items[0].parsed.x)) : '',
+          label: context => {
+            const value = descriptor.formatTooltipValue
+              ? descriptor.formatTooltipValue(Number(context.parsed.y))
+              : context.formattedValue;
+            return `${context.dataset.label}: ${value}`;
+          }
+        }
+      },
+      zoom: {
+        limits: { x: { min: timeSeriesStartEpochMs, max: timeSeriesEndEpochMs, minRange: Math.min(1000, timeSeriesEndEpochMs - timeSeriesStartEpochMs) } },
+        pan: { enabled: true, mode: 'x', modifierKey: 'ctrl', onPanComplete: ({ chart }) => applyTimeSeriesRangeFromChart(chart) },
+        zoom: {
+          mode: 'x', wheel: { enabled: true, modifierKey: 'ctrl' }, pinch: { enabled: true },
+          drag: { enabled: true, modifierKey: 'shift', backgroundColor: 'rgba(70, 161, 95, 0.18)' },
+          onZoomComplete: ({ chart }) => applyTimeSeriesRangeFromChart(chart)
+        }
+      }
+    },
+    scales: {
+      x: { type: 'linear', min, max, title: { display: true, text: '時刻（端末のローカル時刻）' }, ticks: { maxTicksLimit: 6, callback: value => formatTimeAxis(Number(value)) } },
+      ...descriptor.yScales
+    }
+  };
+  temporalCharts[descriptor.id] = new Chart(canvas.getContext('2d'), { type: 'scatter', data: { datasets }, options });
+}
+
+function applyTimeSeriesRangeFromChart(chart) {
+  if (!chart?.scales?.x) return;
+  setTimeSeriesRange(Number(chart.scales.x.min), Number(chart.scales.x.max));
+}
+
+function setTimeSeriesRange(start, end) {
+  if (!Number.isFinite(timeSeriesStartEpochMs) || !Number.isFinite(timeSeriesEndEpochMs)) return;
+  const fullStart = timeSeriesStartEpochMs;
+  const fullEnd = Math.max(timeSeriesEndEpochMs, fullStart + 1);
+  const fullSpan = fullEnd - fullStart;
+  const minSpan = Math.min(1000, fullSpan);
+  let span = Math.min(fullSpan, Math.max(minSpan, Number(end) - Number(start)));
+  if (!Number.isFinite(span)) span = fullSpan;
+  let rangeStart = Number(start);
+  if (!Number.isFinite(rangeStart)) rangeStart = fullStart;
+  rangeStart = Math.max(fullStart, Math.min(fullEnd - span, rangeStart));
+  timeSeriesViewStartEpochMs = rangeStart;
+  timeSeriesViewEndEpochMs = rangeStart + span;
+  updateTimeSeriesRangeLabel();
+  Object.entries(temporalCharts).forEach(([id, chart]) => {
+    const descriptor = temporalChartDescriptors.find(item => item.id === id);
+    if (!descriptor) return;
+    chart.options.scales.x.min = rangeStart;
+    chart.options.scales.x.max = timeSeriesViewEndEpochMs;
+    chart.data.datasets = descriptor.datasets();
+    chart.update('none');
+  });
+}
+
+function updateTimeSeriesRangeLabel() {
+  if (!els.timeSeriesRangeLabel || !Number.isFinite(timeSeriesViewStartEpochMs)) return;
+  els.timeSeriesRangeLabel.textContent = `${formatLocalTimeWithMs(timeSeriesViewStartEpochMs)}　–　${formatLocalTimeWithMs(timeSeriesViewEndEpochMs)}`;
+}
+
+function shiftTimeSeriesRange(direction) {
+  const span = timeSeriesViewEndEpochMs - timeSeriesViewStartEpochMs;
+  setTimeSeriesRange(timeSeriesViewStartEpochMs + span * direction, timeSeriesViewEndEpochMs + span * direction);
+}
+
+function scaleTimeSeriesRange(factor) {
+  const center = (timeSeriesViewStartEpochMs + timeSeriesViewEndEpochMs) / 2;
+  const halfSpan = (timeSeriesViewEndEpochMs - timeSeriesViewStartEpochMs) * factor / 2;
+  setTimeSeriesRange(center - halfSpan, center + halfSpan);
+}
+
+function resetTimeSeriesRange() {
+  setTimeSeriesRange(timeSeriesStartEpochMs, timeSeriesEndEpochMs);
+}
+
+function renderSubjectiveEventTimeline() {
+  const experimentId = subjectiveRecords.find(record => record.experiment_id)?.experiment_id || '';
+  const expected = EXPERIMENT_CHECKPOINTS[experimentId] || [];
+  const checkpointCount = subjectiveRecords.filter(record => record.trigger_type === 'checkpoint').length;
+  const events = subjectiveRecords.filter(record => record.trigger_type !== 'checkpoint');
+  const checkpointIds = new Set(subjectiveRecords
+    .filter(record => record.trigger_type === 'checkpoint')
+    .map(record => record.segment_id));
+  const missingCheckpoints = expected.filter(([id]) => !checkpointIds.has(id)).map(([, label]) => label);
+  const header = experimentId
+    ? `<p class="event-timeline-summary">実験ID：${escapeHtml(experimentId)}　定期評価：${checkpointCount}${expected.length ? ` / ${expected.length} 件` : ' 件'}　追加イベント：${events.length} 件${missingCheckpoints.length ? `<br>未記録の定期評価：${escapeHtml(missingCheckpoints.join('，'))}` : ''}</p>`
+    : '';
+  const rows = events.map(record => `
+    <div class="event-timeline-row">
+      <time>${escapeHtml(formatLocalTimeWithMs(record.epoch_ms))}</time>
+      <strong>${escapeHtml(triggerLabel(record.trigger_type))}</strong>
+      <span>${escapeHtml(segmentLabel(record.experiment_id, record.segment_id))}</span>
+      <span>${escapeHtml(subjectiveDisplayValue(record.thermal_sensation, 'thermal_sensation'))}／${escapeHtml(subjectiveDisplayValue(record.thermal_comfort, 'thermal_comfort'))}</span>
+    </div>`).join('');
+  els.subjectiveEventTimeline.innerHTML = `${header}${rows || '<p class="tiny-muted">追加イベントはありません．</p>'}`;
+}
+
+function formatTimeAxis(epochMs) {
+  const date = new Date(epochMs);
+  const pad = value => String(value).padStart(2, '0');
+  const span = timeSeriesViewEndEpochMs - timeSeriesViewStartEpochMs;
+  if (span >= 24 * 60 * 60 * 1000) return `${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  if (span >= 60 * 60 * 1000) return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function resizeTimeSeriesCharts() {
+  Object.values(temporalCharts).forEach(chart => chart.resize());
+}
+
 function drawBaseTrackIfNeeded() {
   const shouldShow = activeCategory === 'subjective'
     ? els.subjectiveShowTrackToggle.checked
@@ -1156,14 +1869,19 @@ function renderSubjectiveMap() {
 function drawSubjectiveMarkers() {
   joinedSubjectiveRecords.forEach(record => {
     if (record.trigger_type === 'checkpoint' && !els.checkpointToggle.checked) return;
-    if (record.trigger_type === 'self_change' && !els.selfChangeToggle.checked) return;
+    if (isSubjectiveChangeEvent(record.trigger_type) && !els.selfChangeToggle.checked) return;
+    if (record.trigger_type === 'event_evaluation' && !els.eventEvaluationToggle.checked) return;
 
     const value = record[currentSubjectiveMetric];
-    const color = config.subjectivePalettes[currentSubjectiveMetric][String(value)] || '#777';
-    const isSelfChange = record.trigger_type === 'self_change';
+    const eventColor = record.trigger_type === 'comfortable_change' ? '#32965a'
+      : record.trigger_type === 'uncomfortable_change' ? '#c84343' : '#777';
+    const color = isFiniteSubjectiveColor(value, currentSubjectiveMetric)
+      ? subjectiveColor(value, currentSubjectiveMetric)
+      : eventColor;
+    const isSelfChange = isSubjectiveChangeEvent(record.trigger_type);
     const icon = L.divIcon({
       className: 'subjective-marker-wrapper',
-      html: `<div class="subjective-marker ${isSelfChange ? 'self-change' : 'checkpoint'}" style="background:${color}"></div>`,
+      html: `<div class="subjective-marker ${isSelfChange ? 'self-change' : 'checkpoint'} event-${escapeHtml(record.trigger_type)}" style="background:${color}"></div>`,
       iconSize: [20, 20],
       iconAnchor: [10, 10],
       popupAnchor: [0, -10]
@@ -1176,11 +1894,14 @@ function drawSubjectiveMarkers() {
 }
 
 function drawSubjectiveColoredRoute() {
-  if (joinedSubjectiveRecords.length < 2) return;
+  const ratedRecords = joinedSubjectiveRecords.filter(record =>
+    subjectiveScore(record[currentSubjectiveMetric], currentSubjectiveMetric) !== null
+  );
+  if (ratedRecords.length < 2) return;
 
-  for (let index = 0; index < joinedSubjectiveRecords.length - 1; index += 1) {
-    const current = joinedSubjectiveRecords[index];
-    const next = joinedSubjectiveRecords[index + 1];
+  for (let index = 0; index < ratedRecords.length - 1; index += 1) {
+    const current = ratedRecords[index];
+    const next = ratedRecords[index + 1];
     if (next.gps_index < current.gps_index) continue;
 
     const coordinates = gpsRecords
@@ -1188,8 +1909,7 @@ function drawSubjectiveColoredRoute() {
       .map(record => [record.latitude, record.longitude]);
 
     if (coordinates.length < 2) continue;
-    const value = current[currentSubjectiveMetric];
-    const color = config.subjectivePalettes[currentSubjectiveMetric][String(value)] || '#777';
+    const color = subjectiveColor(current[currentSubjectiveMetric], currentSubjectiveMetric);
     L.polyline(coordinates, { color, weight: 7, opacity: 0.83 }).addTo(subjectiveRouteLayer);
   }
 }
@@ -1200,8 +1920,8 @@ function renderSubjectiveLegend() {
   els.legend.innerHTML = `<span class="legend-title">凡例</span>${Object.entries(info.labels)
     .map(([value, label]) => `
       <span class="legend-item">
-        <i class="legend-color" style="background:${palette[value] || '#777'}"></i>
-        ${escapeHtml(valueLabel(value, currentSubjectiveMetric))} ${escapeHtml(label)}
+        <i class="legend-color" style="background:${subjectiveColor(value, currentSubjectiveMetric)}"></i>
+        ${escapeHtml(valueLabel(SUBJECTIVE_SCORE_MAP[currentSubjectiveMetric][value], currentSubjectiveMetric))} ${escapeHtml(label)}
       </span>`)
     .join('')}`;
 }
@@ -1684,12 +2404,14 @@ function buildBioPopup(dataset, record) {
 function buildSubjectivePopup(record) {
   return `
     <dl class="popup-grid">
+      ${record.experiment_id ? `<dt>実験ID</dt><dd>${escapeHtml(record.experiment_id)}</dd>` : ''}
       <dt>評価時刻</dt><dd>${escapeHtml(record.evaluation_started_at)}</dd>
+      <dt>保存時刻</dt><dd>${escapeHtml(record.evaluation_submitted_at)}</dd>
       <dt>評価種別</dt><dd>${escapeHtml(triggerLabel(record.trigger_type))}</dd>
-      <dt>区間</dt><dd>${escapeHtml(record.segment_id)}</dd>
+      <dt>区間</dt><dd>${escapeHtml(segmentLabel(record.experiment_id, record.segment_id))}</dd>
       <dt>温冷感</dt><dd>${escapeHtml(subjectiveDisplayValue(record.thermal_sensation, 'thermal_sensation'))}</dd>
       <dt>快・不快</dt><dd>${escapeHtml(subjectiveDisplayValue(record.thermal_comfort, 'thermal_comfort'))}</dd>
-      <dt>温熱選好</dt><dd>${escapeHtml(subjectiveDisplayValue(record.thermal_preference, 'thermal_preference'))}</dd>
+      ${record.thermal_preference ? `<dt>温熱選好</dt><dd>${escapeHtml(subjectiveDisplayValue(record.thermal_preference, 'thermal_preference'))}</dd>` : ''}
       <dt>GPS時刻</dt><dd>${escapeHtml(record.gps_timestamp)}</dd>
       <dt>GPS精度</dt><dd>${escapeHtml(formatAccuracy(record.accuracy))}</dd>
       <dt>GPS時刻差</dt><dd>${escapeHtml(formatSeconds(record.time_difference_ms))}</dd>
@@ -1711,16 +2433,24 @@ function buildWeatherPopup(record) {
 }
 
 function renderSubjectiveTable() {
+  const thead = els.subjectiveTable.querySelector('thead');
+  thead.innerHTML = `<tr>
+    <th>No.</th><th>評価時刻</th><th>種類</th><th>区間</th><th>温冷感</th><th>快・不快</th>
+    ${subjectiveSchema === 'legacy' ? '<th>温熱選好</th>' : '<th>実験ID</th>'}
+    <th>緯度</th><th>経度</th><th>GPS精度</th><th>時刻差</th>
+  </tr>`;
   const tbody = els.subjectiveTable.querySelector('tbody');
   tbody.innerHTML = joinedSubjectiveRecords.map((record, index) => `
     <tr>
       <td>${index + 1}</td>
       <td>${escapeHtml(record.evaluation_started_at)}</td>
       <td>${escapeHtml(triggerLabel(record.trigger_type))}</td>
-      <td>${escapeHtml(record.segment_id)}</td>
+      <td>${escapeHtml(segmentLabel(record.experiment_id, record.segment_id))}</td>
       <td>${escapeHtml(subjectiveDisplayValue(record.thermal_sensation, 'thermal_sensation'))}</td>
       <td>${escapeHtml(subjectiveDisplayValue(record.thermal_comfort, 'thermal_comfort'))}</td>
-      <td>${escapeHtml(subjectiveDisplayValue(record.thermal_preference, 'thermal_preference'))}</td>
+      ${subjectiveSchema === 'legacy'
+        ? `<td>${escapeHtml(subjectiveDisplayValue(record.thermal_preference, 'thermal_preference'))}</td>`
+        : `<td>${escapeHtml(record.experiment_id || '―')}</td>`}
       <td>${record.latitude.toFixed(7)}</td>
       <td>${record.longitude.toFixed(7)}</td>
       <td>${escapeHtml(formatAccuracy(record.accuracy))}</td>
@@ -1811,11 +2541,17 @@ function saveActiveJoinedCsv() {
 }
 
 function saveSubjectiveJoinedCsv() {
-  const columns = [
-    'trigger_type', 'segment_id', 'evaluation_started_at', 'evaluation_submitted_at',
-    'response_duration_ms', 'thermal_sensation', 'thermal_comfort', 'thermal_preference',
-    'gps_timestamp', 'time_difference_ms', 'latitude', 'longitude', 'accuracy', 'heading', 'speed'
-  ];
+  const columns = subjectiveSchema === 'v2'
+    ? [
+      'experiment_id', 'trigger_type', 'segment_id', 'evaluation_started_at', 'evaluation_submitted_at',
+      'response_duration_ms', 'thermal_sensation', 'thermal_comfort',
+      'gps_timestamp', 'time_difference_ms', 'latitude', 'longitude', 'accuracy', 'heading', 'speed'
+    ]
+    : [
+      'trigger_type', 'segment_id', 'evaluation_started_at', 'evaluation_submitted_at',
+      'response_duration_ms', 'thermal_sensation', 'thermal_comfort', 'thermal_preference',
+      'gps_timestamp', 'time_difference_ms', 'latitude', 'longitude', 'accuracy', 'heading', 'speed'
+    ];
   downloadRecordsCsv(`${sessionBaseName}_subjective_gps_joined.csv`, columns, joinedSubjectiveRecords);
 }
 
@@ -1856,7 +2592,10 @@ function determineSessionBaseName() {
 }
 
 function clearAll() {
+  Object.values(temporalCharts).forEach(chart => chart.destroy());
+  temporalCharts = {};
   selectedFiles = { gps: null, subjective: null, weather: null, switchbot: { '1': null, '2': null, '3': null }, mlx: [], ppg: [] };
+  subjectiveSchema = 'v2';
   gpsRecords = [];
   subjectiveRecords = [];
   weatherRecords = [];
@@ -1870,11 +2609,25 @@ function clearAll() {
   activeCategory = 'gps';
   activeEnvironmentMode = 'm1';
   currentSubjectiveMetric = 'thermal_sensation';
+  configureSubjectiveMetricTabs();
   currentWeatherMetric = 'temperature';
   currentSwitchbotMetric = 'temperature';
   switchbotDisplayMode = 'time';
   currentSwitchbotTimeIndex = 0;
   station1Position = 'A';
+  activeViewMode = 'map';
+  timeSeriesStartEpochMs = null;
+  timeSeriesEndEpochMs = null;
+  timeSeriesViewStartEpochMs = null;
+  timeSeriesViewEndEpochMs = null;
+  temporalChartDescriptors = [];
+  els.timeSeriesViewModeButton.disabled = true;
+  els.timeSeriesRangeLabel.textContent = '―';
+  els.timeSeriesSeriesPicker.replaceChildren();
+  els.timeSeriesChartsContainer.replaceChildren();
+  els.timeSeriesEmptyMessage.classList.add('hidden');
+  els.subjectiveEventTimeline.innerHTML = '';
+  switchViewMode('map');
   els.station1PositionSelect.value = 'A';
   const timeRadio = document.querySelector('input[name="switchbotDisplayMode"][value="time"]');
   if (timeRadio) timeRadio.checked = true;
@@ -2022,29 +2775,75 @@ function formatLocalTimeWithMs(epochMs) {
 }
 
 function formatBioValue(value, info) {
+  if (value === '' || value === null || value === undefined) return '―';
   const number = Number(value);
   if (!Number.isFinite(number)) return '―';
   return `${number.toFixed(info.digits)} ${info.unit}`;
 }
 
+function isSubjectiveChangeEvent(triggerType) {
+  return ['self_change', 'comfortable_change', 'uncomfortable_change'].includes(triggerType);
+}
+
+function subjectiveScore(value, metric) {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  const numeric = Number(text);
+  if (Number.isFinite(numeric)) return numeric;
+  const mapped = SUBJECTIVE_SCORE_MAP[metric]?.[text.toLowerCase()];
+  return Number.isFinite(mapped) ? mapped : null;
+}
+
+function isFiniteSubjectiveColor(value, metric) {
+  if (metric === 'thermal_preference') {
+    return Boolean(config.subjectivePalettes[metric]?.[String(value ?? '').trim()]);
+  }
+  return subjectiveScore(value, metric) !== null;
+}
+
+function subjectiveColor(value, metric) {
+  if (metric === 'thermal_preference') {
+    return config.subjectivePalettes[metric]?.[String(value ?? '').trim()] || '#777';
+  }
+  const score = subjectiveScore(value, metric);
+  return score === null ? '#777' : (config.subjectivePalettes[metric]?.[String(score)] || '#777');
+}
+
+function segmentLabel(experimentId, segmentId) {
+  const checkpoint = EXPERIMENT_CHECKPOINTS[experimentId]
+    ?.find(([id]) => id === segmentId);
+  return checkpoint ? `${checkpoint[1]}（${segmentId}）` : segmentId || '―';
+}
+
 function triggerLabel(value) {
-  if (value === 'checkpoint') return '定期地点評価';
+  if (value === 'checkpoint') return '定期評価';
   if (value === 'self_change') return '変動による評価';
+  if (value === 'comfortable_change') return '快適方向への変化';
+  if (value === 'uncomfortable_change') return '不快方向への変化';
+  if (value === 'event_evaluation') return '任意評価';
   return value || '―';
 }
 
 function subjectiveDisplayValue(value, metric) {
-  const key = String(value);
-  const label = SUBJECTIVE_METRIC_INFO[metric].labels[key] || key || '―';
-  if (metric === 'thermal_preference') return label;
-  const number = Number(value);
-  const prefix = number > 0 ? '＋' : number < 0 ? '−' : '';
-  const displayNumber = number < 0 ? Math.abs(number) : number;
-  return `${prefix}${displayNumber}：${label}`;
+  const key = String(value ?? '').trim();
+  if (!key) return '―';
+  if (metric === 'thermal_preference') {
+    const label = SUBJECTIVE_METRIC_INFO[metric].labels[key] || key;
+    return label;
+  }
+
+  const score = subjectiveScore(key, metric);
+  if (score === null) return key;
+  const categoryCode = Object.entries(SUBJECTIVE_SCORE_MAP[metric] || {})
+    .find(([, ordinal]) => ordinal === score)?.[0];
+  const label = SUBJECTIVE_METRIC_INFO[metric].labels[categoryCode] || key;
+  const prefix = score > 0 ? '＋' : score < 0 ? '−' : '';
+  const displayNumber = score < 0 ? Math.abs(score) : score;
+  return /^-?\d+(\.\d+)?$/.test(key) ? `${prefix}${displayNumber}：${label}` : label;
 }
 
 function valueLabel(value, metric) {
-  if (metric === 'thermal_preference') return '';
+  if (metric === 'thermal_preference' || !Number.isFinite(Number(value))) return '';
   const number = Number(value);
   if (number > 0) return `＋${number}`;
   if (number < 0) return `−${Math.abs(number)}`;
@@ -2056,10 +2855,12 @@ function formatWeatherValue(value, info) {
 }
 
 function formatOptionalMetric(value, unit) {
+  if (value === '' || value === null || value === undefined) return '―';
   return Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)} ${unit}` : '―';
 }
 
 function formatAccuracy(value) {
+  if (value === '' || value === null || value === undefined) return '―';
   return Number.isFinite(Number(value)) ? `±${Number(value).toFixed(1)} m` : '―';
 }
 
